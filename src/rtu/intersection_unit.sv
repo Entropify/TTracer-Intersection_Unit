@@ -168,26 +168,46 @@ module intersection_unit #(
     // input resp_valid, resp_result stay same until resp_ready and req_valid(?)
 
     // ------------------------------------------------------------------
-    // K shift and the leading-one finder (spec 5d). The finder picks K so that
-    // a radius lands in 8..16 before it is squared; the shifter applies K on
-    // the way into a request, so it costs no cycles.
+    // K shift and the highest-set-bit finder (spec 5d). The finder picks K so
+    // that a radius lands in 8..16 before it is squared; the shifter applies K
+    // on the way into a request, so it costs no cycles.
+    //
+    // The finder is written as gates, not as a loop: a priority chain leaves
+    // exactly one bit set, then an OR tree turns that bit into its index. The
+    // input is the raw radius word as it lands, so no extra register is needed.
     // ------------------------------------------------------------------
-    function automatic logic [3:0] leading_one(input logic [14:0] v);
-        integer i;
-        logic   found;
-        begin
-            leading_one = 4'd0;
-            found       = 1'b0;
-            for (i = 14; i >= 0; i--) begin
-                if (v[i] && !found) begin
-                    leading_one = i[3:0];
-                    found       = 1'b1;
-                end
-            end
-        end
-    endfunction
+    // Bits 14..1 of the one-hot. Bit 0 is not built: if the highest set bit is
+    // position 0 then every index bit is 0 anyway, so it feeds nothing.
+    logic [14:1] lof_prio;   // one-hot: the highest set bit of sram_data[14:0]
+    logic [3:0]  lof_index;  // that bit's position
 
-    // K = leading_one(raw r) - 10, so r_s is 8 to 16 and r_s^2 is 64 to 256 and
+    // Priority: a bit survives only when nothing above it is set
+    assign lof_prio[14] = sram_data[14];
+    assign lof_prio[13] = sram_data[13] & ~(|sram_data[14:14]);
+    assign lof_prio[12] = sram_data[12] & ~(|sram_data[14:13]);
+    assign lof_prio[11] = sram_data[11] & ~(|sram_data[14:12]);
+    assign lof_prio[10] = sram_data[10] & ~(|sram_data[14:11]);
+    assign lof_prio[9]  = sram_data[9]  & ~(|sram_data[14:10]);
+    assign lof_prio[8]  = sram_data[8]  & ~(|sram_data[14:9]);
+    assign lof_prio[7]  = sram_data[7]  & ~(|sram_data[14:8]);
+    assign lof_prio[6]  = sram_data[6]  & ~(|sram_data[14:7]);
+    assign lof_prio[5]  = sram_data[5]  & ~(|sram_data[14:6]);
+    assign lof_prio[4]  = sram_data[4]  & ~(|sram_data[14:5]);
+    assign lof_prio[3]  = sram_data[3]  & ~(|sram_data[14:4]);
+    assign lof_prio[2]  = sram_data[2]  & ~(|sram_data[14:3]);
+    assign lof_prio[1]  = sram_data[1]  & ~(|sram_data[14:2]);
+
+    // One-hot to index: one OR per index bit
+    assign lof_index[0] = lof_prio[1]  | lof_prio[3]  | lof_prio[5]  | lof_prio[7]  |
+                          lof_prio[9]  | lof_prio[11] | lof_prio[13];
+    assign lof_index[1] = lof_prio[2]  | lof_prio[3]  | lof_prio[6]  | lof_prio[7]  |
+                          lof_prio[10] | lof_prio[11] | lof_prio[14];
+    assign lof_index[2] = lof_prio[4]  | lof_prio[5]  | lof_prio[6]  | lof_prio[7]  |
+                          lof_prio[12] | lof_prio[13] | lof_prio[14];
+    assign lof_index[3] = lof_prio[8]  | lof_prio[9]  | lof_prio[10] | lof_prio[11] |
+                          lof_prio[12] | lof_prio[13] | lof_prio[14];
+
+    // K = that index - 10, so r_s is 8 to 16 and r_s^2 is 64 to 256 and
     // never clamps. K > 0 shifts right and rounds, K < 0 shifts left and clamps
     // to 0x7FFF or 0x8000 (spec: "The leading-one finder", "Clamp").
     function automatic logic [15:0] kshift(input logic signed [15:0] v,
@@ -644,7 +664,6 @@ module intersection_unit #(
     logic        obj_tri;       // current object is a triangle (test still WiP)
     // Best hit of this segment
     logic [15:0] best_t_q;
-    logic [8:0]  best_addr_q;
     logic        best_flip_q;
     logic        hit_any_q;
     logic        cand_flip;     // the candidate t came from the exit point
@@ -690,7 +709,7 @@ module intersection_unit #(
     logic signed [4:0] k_next;
     logic [15:0]       rs_next;
 
-    assign k_next  = $signed({1'b0, leading_one(sram_data[14:0])}) - 5'sd10;
+    assign k_next  = $signed({1'b0, lof_index}) - 5'sd10;
     assign rs_next = kshift($signed(sram_data), k_next);
 
 
@@ -713,7 +732,6 @@ module intersection_unit #(
             hit        <= 1'b0;
             hit_ground <= 1'b0;
             hit_flip   <= 1'b0;
-            hit_addr   <= 9'd0;
         end else if (start) begin
             // A new segment starts with no hit; the object and ground tests
             // set these, the BV search alone cannot
@@ -722,7 +740,6 @@ module intersection_unit #(
             hit        <= 1'b0;
             hit_ground <= 1'b0;
             hit_flip   <= 1'b0;
-            hit_addr   <= 9'd0;
         end else begin
             state_q <= state_d;
             
@@ -742,7 +759,6 @@ module intersection_unit #(
                     done       <= 1'b1;
                     hit        <= hit_any_q;
                     hit_ground <= hit_ground_q;
-                    hit_addr   <= best_addr_q;
                     hit_flip   <= best_flip_q;
                 end
 
@@ -804,13 +820,13 @@ module intersection_unit #(
                             end
                             // winner: the centre of the best sphere, w4-w6
                             PH_WIN_C: begin
-                                sram_addr    <= best_addr_q + 9'd4;
+                                sram_addr    <= hit_addr + 9'd4;
                                 sram_w_index <= 3'd2;
                                 sram_w_last  <= 3'd4;
                             end
                             // winner: the radius at its true size, w3
                             PH_WIN_R: begin
-                                sram_addr    <= best_addr_q + 9'd3;
+                                sram_addr    <= hit_addr + 9'd3;
                                 sram_w_index <= 3'd0;
                                 sram_w_last  <= 3'd0;
                             end
@@ -908,7 +924,6 @@ module intersection_unit #(
             obj_cnt_q    <= 7'd0;
             obj_tri      <= 1'b0;
             best_t_q     <= 16'h7FFF;
-            best_addr_q  <= 9'd0;
             best_flip_q  <= 1'b0;
             hit_any_q    <= 1'b0;
             cand_flip    <= 1'b0;
@@ -916,6 +931,7 @@ module intersection_unit #(
             hit_point_q  <= 48'd0;
             n_q          <= 48'd0;
             hit_ground_q <= 1'b0;
+            hit_addr     <= 9'd0;
             bv_phase     <= PH_READ;
             calc_stage_q <= CALC_R2;
 
@@ -927,7 +943,6 @@ module intersection_unit #(
             result_q     <= 48'd0;
             obj_tri      <= 1'b0;
             best_t_q     <= 16'h7FFF;
-            best_addr_q  <= 9'd0;
             best_flip_q  <= 1'b0;
             hit_any_q    <= 1'b0;
             cand_flip    <= 1'b0;
@@ -935,6 +950,7 @@ module intersection_unit #(
             hit_point_q  <= 48'd0;
             n_q          <= 48'd0;
             hit_ground_q <= 1'b0;
+            hit_addr     <= 9'd0;
             // a scene with no BVs goes straight to the ground test
             bv_phase     <= (bv_count == 5'd0) ? PH_GROUND : PH_READ;
             calc_stage_q <= (bv_count == 5'd0) ? GR_UP     : CALC_R2;
@@ -1127,7 +1143,7 @@ module intersection_unit #(
                                 // Latch result (Compare): closer than the best so far
                                 if (resp_result[0]) begin
                                     best_t_q    <= slot_k;
-                                    best_addr_q <= obj_addr_q;
+                                    hit_addr    <= obj_addr_q;   // the port holds it from here
                                     best_flip_q <= cand_flip;
                                     best_type_q <= obj_tri;
                                     hit_any_q   <= 1'b1;
