@@ -214,7 +214,45 @@ module intersection_unit #(
 
     // Assumption:
     // input ray_origin, ray_dir, bv_count stay same in between start 1-cycle pulse
-    // input resp_valid, resp_result stay same until resp_ready and req_valid(?)
+    // input resp_valid, res stay same until resp_ready and req_valid(?)
+
+    // ------------------------------------------------------------------
+    // Free compares (Rec 2). Ten checks in the step lists only read the sign,
+    // or a threshold, of a number this module already holds. Doing them through
+    // the Decode costs a three cycle round trip; as gates they cost one cycle.
+    // ------------------------------------------------------------------
+    logic cmp_free;   // the current step is one of those checks
+    logic free_res;   // its answer, valid the cycle the step is current
+    logic [47:0] res; // the step's result, from the gates or from the Decode
+
+    always_comb begin
+        cmp_free = 1'b0;
+        free_res = 1'b0;
+        case (calc_stage_q)
+            // along < 0: is the bubble's centre behind the start?
+            CALC_BEHIND: begin cmp_free = 1'b1; free_res = slot_a[15]; end
+            // 0.0156 < t: is anything actually in front of the start?
+            SP_TGATE,
+            SP_TGATE2,
+            TRI_GATE:    begin cmp_free = 1'b1;
+                               free_res = !slot_k[15] && (|slot_k[14:2] || &slot_k[1:0]); end
+            // D_z < 0: does the ray point down?
+            GR_UP:       begin cmp_free = 1'b1; free_res = ray_dir[47]; end
+            // 225 < |slid_s|^2: further than 15 from the corner? 225 is 28,800 raw
+            TRI_FAR:     begin cmp_free = 1'b1; free_res = (result_q[15:0] > 16'd28800); end
+            // det < 0: back side hit
+            TRI_BACK:    begin cmp_free = 1'b1; free_res = slot_i[15]; end
+            // 0 < det: not parallel to the plane
+            TRI_DETP:    begin cmp_free = 1'b1; free_res = !slot_i[15] && (|slot_i); end
+            // alpha_top < 0 and beta_top < 0
+            TRI_ATOPN:   begin cmp_free = 1'b1; free_res = slot_b[15]; end
+            TRI_BETAN:   begin cmp_free = 1'b1; free_res = slot_j[15]; end
+            default: ;
+        endcase
+    end
+
+    // A free compare has no answer to wait for, so it completes on its own cycle
+    assign res = cmp_free ? {47'd0, free_res} : resp_result;
 
     // ------------------------------------------------------------------
     // K shift and the highest-set-bit finder (spec 5d). The finder picks K so
@@ -535,10 +573,13 @@ module intersection_unit #(
         case (calc_stage_q)
             CALC_R2:     calc_stage_d = CALC_TC;
             CALC_TC:     calc_stage_d = CALC_ALONG;
-            CALC_ALONG:  calc_stage_d = CALC_TCSQ;
-            CALC_TCSQ:   calc_stage_d = CALC_INSIDE;
-            CALC_INSIDE: calc_stage_d = CALC_BEHIND;   // overridden when inside
+            CALC_ALONG:  calc_stage_d = CALC_BEHIND;
+            // Rec 1: ask about the centre first, and then only one square is
+            // ever needed. Behind: only a start inside can still reach, so look
+            // at that. Ahead: the closest-approach check covers both cases.
             CALC_BEHIND: calc_stage_d = CALC_M;        // overridden when behind
+            CALC_TCSQ:   calc_stage_d = CALC_INSIDE;
+            CALC_INSIDE: calc_stage_d = CALC_DONE;
             CALC_M:      calc_stage_d = CALC_OFF;
             CALC_OFF:    calc_stage_d = CALC_OFFSQ;
             CALC_OFFSQ:  calc_stage_d = CALC_REACH;
@@ -600,13 +641,12 @@ module intersection_unit #(
         endcase
 
         if (step_done) begin
-            if (calc_stage_q == CALC_INSIDE && resp_result[0]) calc_stage_d = CALC_DONE;
-            if (calc_stage_q == CALC_BEHIND && resp_result[0]) calc_stage_d = CALC_DONE;
-            if (calc_stage_q == SP_MISS    && !resp_result[0]) calc_stage_d = CALC_DONE;
-            if (calc_stage_q == SP_TGATE   && resp_result[0])  calc_stage_d = SP_BEST;
-            if (calc_stage_q == SP_TGATE2  && !resp_result[0]) calc_stage_d = CALC_DONE;
-            if (calc_stage_q == GR_UP      && !resp_result[0]) calc_stage_d = CALC_DONE;
-            if (calc_stage_q == TRI_BACK   && !resp_result[0]) calc_stage_d = TRI_DETP;
+            if (calc_stage_q == CALC_BEHIND && res[0]) calc_stage_d = CALC_TCSQ;
+            if (calc_stage_q == SP_MISS    && !res[0]) calc_stage_d = CALC_DONE;
+            if (calc_stage_q == SP_TGATE   && res[0])  calc_stage_d = SP_BEST;
+            if (calc_stage_q == SP_TGATE2  && !res[0]) calc_stage_d = CALC_DONE;
+            if (calc_stage_q == GR_UP      && !res[0]) calc_stage_d = CALC_DONE;
+            if (calc_stage_q == TRI_BACK   && !res[0]) calc_stage_d = TRI_DETP;
             if (calc_stage_q == TRI_BETA   && !tri_back)       calc_stage_d = TRI_BETAN;
         end
     end
@@ -875,6 +915,7 @@ module intersection_unit #(
     logic [47:0] n_q;           // the out-arrow, DIR
     logic        hit_ground_q;  // the winner is the ground
     logic        tri_back;      // the triangle under test is back-facing
+    logic        obj_dead;      // Q10: this object has zero size, so skip it
     logic [4:0]  best_k_q;      // the winner's K, to re-read a triangle's edges
     logic [14:0] tri_mag;       // largest edge part seen in this triangle's burst
     // Request construction
@@ -893,10 +934,11 @@ module intersection_unit #(
                         ((dec_state_q == S_DEC_IDLE) && calc_active);
     assign req_op     = (dec_state_q == S_DEC_SEND) ? req_op_q : req_field;
     assign resp_ready = 1'b1;   // spec 5.5: tied high, the Decode leaves on it
-    assign step_done  = (dec_state_q == S_DEC_WAIT) && resp_valid;
-    assign calc_active = (bv_phase == PH_CALC) || (bv_phase == PH_SPHERE) ||
-                         (bv_phase == PH_GROUND) || (bv_phase == PH_WIN) ||
-                         (bv_phase == PH_TRI)    || (bv_phase == PH_NORM);
+    assign step_done  = cmp_free || ((dec_state_q == S_DEC_WAIT) && resp_valid);
+    assign calc_active = ((bv_phase == PH_CALC) || (bv_phase == PH_SPHERE) ||
+                          (bv_phase == PH_GROUND) || (bv_phase == PH_WIN) ||
+                          (bv_phase == PH_TRI)    || (bv_phase == PH_NORM)) &&
+                         !cmp_free;   // a free compare asks the Decode for nothing
 
     // 2 cycles per word: the pulse travels with the capture of the word before
     assign sram_rd = (sram_state_q == S_SRAM_SEND) ||
@@ -1153,6 +1195,11 @@ module intersection_unit #(
                             3'd1: begin
                                 slot_b     <= rs_next; // radius, already shifted by K
                                 k_q        <= k_next;
+                                // Q10: a zero radius means no volume, so the test
+                                // could never pass and the normal step would divide
+                                // by zero. Skip the object at the cheapest point.
+                                if (bv_phase == PH_HEAD && sram_data == 16'd0)
+                                    obj_dead <= 1'b1;
                             end
                             3'd2: begin
                                 slot_c     <= sram_data; // z
@@ -1231,6 +1278,7 @@ module intersection_unit #(
             tri_back     <= 1'b0;
             tri_mag      <= 15'd0;
             best_k_q     <= 5'sd0;
+            obj_dead     <= 1'b0;
 
         end else if (start) begin
             // Reset the BV loop for a new ray
@@ -1251,6 +1299,7 @@ module intersection_unit #(
             tri_back     <= 1'b0;
             tri_mag      <= 15'd0;
             best_k_q     <= 5'sd0;
+            obj_dead     <= 1'b0;
             // a scene with no BVs goes straight to the ground test
             bv_phase     <= (bv_count == 5'd0) ? PH_GROUND : PH_READ;
             calc_stage_q <= (bv_count == 5'd0) ? GR_UP     : CALC_R2;
@@ -1290,7 +1339,7 @@ module intersection_unit #(
                 S_DEC_WAIT: begin
                     // Accept Decoder response
                     if (resp_valid) begin
-                        // Latch resp_result
+                        // Latch res
                         // Note: not sure how to deal with 2 root, in the document at
                         // https://uw-asic.github.io/TinyTracer/encoding/instruction/
                         // it is said that in Functional Units
@@ -1300,7 +1349,7 @@ module intersection_unit #(
                         // The two-root question does not arise any more: the entry
                         // point is along - half and the exit point along + half, so
                         // a BV test needs no square root and no divide at all.
-                        result_q <= resp_result;
+                        result_q <= res;
 
                         // local registers held across the BV test
                         // slot_a: along
@@ -1315,21 +1364,21 @@ module intersection_unit #(
                         case (calc_stage_q)
                             CALC_R2: begin
                                 // Latch result (Scalar)
-                                slot_i       <= resp_result [15:0];
+                                slot_i       <= res [15:0];
 
                                 // Internal tracking
                             end
 
                             CALC_TC: begin
                                 // Latch result (Vector 3)
-                                {slot_f, slot_g, slot_h} <= resp_result;
+                                {slot_f, slot_g, slot_h} <= res;
 
                                 // Internal tracking
                             end
 
                             CALC_ALONG: begin
                                 // Latch result (Scalar)
-                                slot_a       <= resp_result [15:0];
+                                slot_a       <= res [15:0];
 
                                 // Internal tracking
                             end
@@ -1342,7 +1391,7 @@ module intersection_unit #(
 
                             CALC_INSIDE: begin
                                 // Latch result (Compare)
-                                if (resp_result[0]) begin
+                                if (res[0]) begin
                                     // The ray starts inside the BV: objects
                                     // inside can still be hit, so reach
                                 end else begin
@@ -1351,7 +1400,7 @@ module intersection_unit #(
 
                             CALC_BEHIND: begin
                                 // Latch result (Compare)
-                                if (resp_result[0]) begin
+                                if (res[0]) begin
                                     // Centre behind the start: moving along the
                                     // ray only takes it farther away
                                 end else begin
@@ -1366,7 +1415,7 @@ module intersection_unit #(
 
                             CALC_OFF: begin
                                 // Latch result (Vector 3)
-                                {slot_f, slot_g, slot_h} <= resp_result;
+                                {slot_f, slot_g, slot_h} <= res;
 
                                 // Internal tracking
                             end
@@ -1380,23 +1429,23 @@ module intersection_unit #(
                             CALC_REACH: begin
                                 // Latch result (Compare): reach reads w0, skip
                                 // moves straight to the next BV
-                                bv_phase     <= resp_result[0] ? PH_W0 : PH_NEXT;
+                                bv_phase     <= res[0] ? PH_W0 : PH_NEXT;
                             end
 
                             // sphere test (spec 5d)
                             SP_R2: begin
                                 // Latch result (Scalar)
-                                slot_i       <= resp_result [15:0];
+                                slot_i       <= res [15:0];
                             end
 
                             SP_TC: begin
                                 // Latch result (Vector 3)
-                                {slot_f, slot_g, slot_h} <= resp_result;
+                                {slot_f, slot_g, slot_h} <= res;
                             end
 
                             SP_ALONG: begin
                                 // Latch result (Scalar)
-                                slot_a       <= resp_result [15:0];
+                                slot_a       <= res [15:0];
                             end
 
                             SP_M: begin
@@ -1405,14 +1454,14 @@ module intersection_unit #(
 
                             SP_OFF: begin
                                 // Latch result (Vector 3): offset replaces to_centre
-                                {slot_f, slot_g, slot_h} <= resp_result;
+                                {slot_f, slot_g, slot_h} <= res;
                             end
 
                             SP_OFFSQ: begin
                                 // Latch result (Scalar): the miss compare and the
                                 // half chord both read it, so it cannot ride in
                                 // result_q across the compare
-                                slot_j       <= resp_result [15:0];
+                                slot_j       <= res [15:0];
                             end
 
                             SP_MISS: begin
@@ -1425,24 +1474,24 @@ module intersection_unit #(
 
                             SP_SQRT: begin
                                 // Latch result (Scalar): half_s, still at the shifted size
-                                slot_j       <= resp_result [15:0];
+                                slot_j       <= res [15:0];
                             end
 
                             SP_T: begin
                                 // Latch result (Scalar): entry point
-                                slot_k    <= resp_result [15:0];
+                                slot_k    <= res [15:0];
                                 cand_flip <= 1'b0;
                             end
 
                             SP_T2: begin
                                 // Latch result (Scalar): exit point, ray started inside
-                                slot_k    <= resp_result [15:0];
+                                slot_k    <= res [15:0];
                                 cand_flip <= 1'b1;
                             end
 
                             SP_BEST: begin
                                 // Latch result (Compare): closer than the best so far
-                                if (resp_result[0]) begin
+                                if (res[0]) begin
                                     best_t_q    <= slot_k;
                                     hit_addr    <= obj_addr_q;   // the port holds it from here
                                     best_flip_q <= cand_flip;
@@ -1469,7 +1518,7 @@ module intersection_unit #(
                             H2: begin
                                 // Latch result (Vector 3): the hit point, held
                                 // until the next start
-                                hit_point_q  <= resp_result;
+                                hit_point_q  <= res;
                             end
 
                             S2: begin
@@ -1479,7 +1528,7 @@ module intersection_unit #(
                             S4: begin
                                 // Latch result (Vector 3): the out-arrow, held
                                 // until the next start
-                                n_q          <= resp_result;
+                                n_q          <= res;
                             end
 
                             // triangle test (spec 5e). Edge 1 shares its three
@@ -1487,12 +1536,12 @@ module intersection_unit #(
                             // moment det is built and they take its place.
                             TRI_TC: begin
                                 // Latch result (Vector 3): the corner arrow
-                                {slot_f, slot_g, slot_h} <= resp_result;
+                                {slot_f, slot_g, slot_h} <= res;
                             end
 
                             TRI_ALONG: begin
                                 // Latch result (Scalar)
-                                slot_a       <= resp_result [15:0];
+                                slot_a       <= res [15:0];
                             end
 
                             TRI_M: begin
@@ -1501,7 +1550,7 @@ module intersection_unit #(
 
                             TRI_SLID: begin
                                 // Latch result (Vector 3): slid replaces to_corner
-                                {slot_f, slot_g, slot_h} <= resp_result;
+                                {slot_f, slot_g, slot_h} <= res;
                             end
 
                             TRI_SLIDSQ: begin
@@ -1514,22 +1563,22 @@ module intersection_unit #(
 
                             TRI_P: begin
                                 // Latch result (Vector 3): P replaces edge 2
-                                {slot_c, slot_d, slot_e} <= resp_result;
+                                {slot_c, slot_d, slot_e} <= res;
                             end
 
                             TRI_DET: begin
                                 // Latch result (Scalar): the bottom of both fractions
-                                slot_i       <= resp_result [15:0];
+                                slot_i       <= res [15:0];
                             end
 
                             TRI_ATOP: begin
                                 // Latch result (Scalar): edge 1 is dead here
-                                slot_b       <= resp_result [15:0];
+                                slot_b       <= res [15:0];
                             end
 
                             TRI_BACK: begin
                                 // Latch result (Compare): a negative det is a back side hit
-                                if (resp_result[0]) begin
+                                if (res[0]) begin
                                     tri_back  <= 1'b1;
                                     cand_flip <= 1'b1;
                                 end
@@ -1537,12 +1586,12 @@ module intersection_unit #(
 
                             TRI_NEGD: begin
                                 // Latch result (Scalar): det made positive
-                                slot_i       <= resp_result [15:0];
+                                slot_i       <= res [15:0];
                             end
 
                             TRI_NEGA: begin
                                 // Latch result (Scalar): alpha_top made positive
-                                slot_b       <= resp_result [15:0];
+                                slot_b       <= res [15:0];
                             end
 
                             TRI_DETP: begin
@@ -1563,12 +1612,12 @@ module intersection_unit #(
 
                             TRI_BETA: begin
                                 // Latch result (Scalar)
-                                slot_j       <= resp_result [15:0];
+                                slot_j       <= res [15:0];
                             end
 
                             TRI_NEGB: begin
                                 // Latch result (Scalar): beta_top made positive
-                                slot_j       <= resp_result [15:0];
+                                slot_j       <= res [15:0];
                             end
 
                             TRI_BETAN: begin
@@ -1585,12 +1634,12 @@ module intersection_unit #(
 
                             TRI_ALPHA: begin
                                 // Latch result (Direct): alpha, 0 to 1
-                                slot_b       <= resp_result [15:0];
+                                slot_b       <= res [15:0];
                             end
 
                             TRI_BETAD: begin
                                 // Latch result (Direct): beta, 0 to 1
-                                slot_j       <= resp_result [15:0];
+                                slot_j       <= res [15:0];
                             end
 
                             TRI_E1D: begin
@@ -1603,7 +1652,7 @@ module intersection_unit #(
 
                             TRI_SUM1: begin
                                 // Latch result (Scalar): det is dead, the partial sum takes it
-                                slot_i       <= resp_result [15:0];
+                                slot_i       <= res [15:0];
                             end
 
                             TRI_E2D: begin
@@ -1616,7 +1665,7 @@ module intersection_unit #(
 
                             TRI_T: begin
                                 // Latch result (Scalar): the candidate distance
-                                slot_k       <= resp_result [15:0];
+                                slot_k       <= res [15:0];
                             end
 
                             TRI_GATE: begin
@@ -1625,7 +1674,7 @@ module intersection_unit #(
 
                             TRI_BEST: begin
                                 // Latch result (Compare): closer than the best so far
-                                if (resp_result[0]) begin
+                                if (res[0]) begin
                                     best_t_q    <= slot_k;
                                     hit_addr    <= obj_addr_q;
                                     best_flip_q <= cand_flip;
@@ -1638,13 +1687,13 @@ module intersection_unit #(
                             // triangle normal (spec 5g)
                             N1_CROSS: begin
                                 // Latch result (Vector 3): the arrow out of the face
-                                {slot_c, slot_d, slot_e} <= resp_result;
+                                {slot_c, slot_d, slot_e} <= res;
                             end
 
                             N2_NORM: begin
                                 // Latch result (Vector 3): length 1, held until
                                 // the next start
-                                n_q          <= resp_result;
+                                n_q          <= res;
                             end
 
                             // WiP for hit_flip
@@ -1668,9 +1717,9 @@ module intersection_unit #(
                 // the three compares end the BV: inside -> reach, behind ->
                 // skip, and the last one decides reach or skip
                 PH_CALC: if (step_done) begin
-                             if (calc_stage_q == CALC_INSIDE && resp_result[0])      bv_phase <= PH_W0;
-                             else if (calc_stage_q == CALC_BEHIND && resp_result[0]) bv_phase <= PH_NEXT;
-                             else if (calc_stage_q == CALC_REACH)                    bv_phase <= resp_result[0] ? PH_W0 : PH_NEXT;
+                             // behind: inside decides. ahead: closest approach decides
+                             if (calc_stage_q == CALC_INSIDE)     bv_phase <= res[0] ? PH_W0 : PH_NEXT;
+                             else if (calc_stage_q == CALC_REACH) bv_phase <= res[0] ? PH_W0 : PH_NEXT;
                          end
                 // w0 of the BV: where its objects start and how many there are
                 PH_W0:   if (sram_read) begin
@@ -1682,15 +1731,17 @@ module intersection_unit #(
                 PH_OBJ:  if (sram_read) begin
                              obj_tri  <= ~sram_word_q[0];
                              tri_back <= 1'b0;
+                             obj_dead <= 1'b0;
                              bv_phase <= sram_word_q[0] ? PH_HEAD : PH_TRI_E;
                          end
-                // w3-w6 of the object: radius first, then the centre
-                PH_HEAD: if (sram_read) bv_phase <= PH_SPHERE;
+                // w3-w6 of the object: radius first, then the centre. A sphere of
+                // zero radius is skipped rather than tested.
+                PH_HEAD: if (sram_read) bv_phase <= obj_dead ? PH_OBJ_NEXT : PH_SPHERE;
                 // the sphere sequence ends on a miss, on a failed exit gate, or
                 // after the best-hit compare
                 PH_SPHERE: if (step_done) begin
-                             if (calc_stage_q == SP_MISS && !resp_result[0])        bv_phase <= PH_OBJ_NEXT;
-                             else if (calc_stage_q == SP_TGATE2 && !resp_result[0]) bv_phase <= PH_OBJ_NEXT;
+                             if (calc_stage_q == SP_MISS && !res[0])        bv_phase <= PH_OBJ_NEXT;
+                             else if (calc_stage_q == SP_TGATE2 && !res[0]) bv_phase <= PH_OBJ_NEXT;
                              else if (calc_stage_q == SP_BEST)                      bv_phase <= PH_OBJ_NEXT;
                          end
                 // +7 words for a sphere, +12 for a triangle, one object less
@@ -1716,15 +1767,15 @@ module intersection_unit #(
                 end
                 // the ground test (spec 5f): only a downward ray can reach it
                 PH_GROUND: if (step_done) begin
-                               if (calc_stage_q == GR_UP && !resp_result[0]) begin
+                               if (calc_stage_q == GR_UP && !res[0]) begin
                                    bv_phase <= PH_CHECK;   // the ray points up: sky
                                end else if (calc_stage_q == GR_T) begin
                                    // the clamp means too far, and a negative
                                    // quotient means the floor is behind the beam
-                                   if (resp_result[15:0] != 16'h7FFF && !resp_result[15]) begin
+                                   if (res[15:0] != 16'h7FFF && !res[15]) begin
                                        // floor at this distance, and it wins because
                                        // no object was found
-                                       best_t_q     <= resp_result[15:0];
+                                       best_t_q     <= res[15:0];
                                        hit_ground_q <= 1'b1;
                                        hit_any_q    <= 1'b1;
                                        n_q          <= {16'h4000, 16'd0, 16'd0};
@@ -1759,7 +1810,10 @@ module intersection_unit #(
                           end
                 // triangle: both edges first, because K comes from them and
                 // nothing may be shifted before it is known
-                PH_TRI_E:   if (sram_read) bv_phase <= PH_TRI_V;
+                // all six edge words zero means no area, so nothing to test; a
+                // triangle with parallel edges still falls out at the det check
+                PH_TRI_E:   if (sram_read) bv_phase <= (tri_mag_next == 15'd0) ? PH_OBJ_NEXT
+                                                                               : PH_TRI_V;
                 PH_TRI_V:   if (sram_read) begin
                                 bv_phase     <= PH_TRI;
                                 calc_stage_q <= TRI_TC;
@@ -1784,16 +1838,16 @@ module intersection_unit #(
                 // the triangle chain: every failed check drops to the next object
                 PH_TRI: if (step_done) begin
                             case (calc_stage_q)
-                                TRI_FAR:   if (resp_result[0])  bv_phase <= PH_OBJ_NEXT; // over 15 from the corner
-                                TRI_DETP:  if (!resp_result[0]) bv_phase <= PH_OBJ_NEXT; // parallel to the plane
-                                TRI_ATOPN: if (resp_result[0])  bv_phase <= PH_OBJ_NEXT;
-                                TRI_DETLO: if (resp_result[0])  bv_phase <= PH_OBJ_NEXT;
+                                TRI_FAR:   if (res[0])  bv_phase <= PH_OBJ_NEXT; // over 15 from the corner
+                                TRI_DETP:  if (!res[0]) bv_phase <= PH_OBJ_NEXT; // parallel to the plane
+                                TRI_ATOPN: if (res[0])  bv_phase <= PH_OBJ_NEXT;
+                                TRI_DETLO: if (res[0])  bv_phase <= PH_OBJ_NEXT;
                                            else                bv_phase <= PH_TRI_E1B;
-                                TRI_BETAN: if (resp_result[0])  bv_phase <= PH_OBJ_NEXT;
-                                TRI_SUMD:  if (resp_result[0])  bv_phase <= PH_OBJ_NEXT;
+                                TRI_BETAN: if (res[0])  bv_phase <= PH_OBJ_NEXT;
+                                TRI_SUMD:  if (res[0])  bv_phase <= PH_OBJ_NEXT;
                                 TRI_BETAD: bv_phase <= PH_TRI_E1C;
                                 TRI_SUM1:  bv_phase <= PH_TRI_E2C;
-                                TRI_GATE:  if (!resp_result[0]) bv_phase <= PH_OBJ_NEXT; // behind the start
+                                TRI_GATE:  if (!res[0]) bv_phase <= PH_OBJ_NEXT; // behind the start
                                 TRI_BEST:  bv_phase <= PH_OBJ_NEXT;
                                 default: ;
                             endcase
