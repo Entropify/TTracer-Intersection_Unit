@@ -38,46 +38,87 @@ package iu_types_pkg;
     // t = (h + sqrt(h*h - a*c)) / a. A bounding-volume test needs no distance at
     // all and the sphere test only needs the half chord, so the sequence now
     // follows the spec's along/offset form, which the sphere test reuses as is:
-    typedef enum logic [5:0] {
-        CALC_R2     = 6'd0,   // r_s^2 = r_s x r_s                 M_MUL fmt 0       3
-        CALC_TC     = 6'd1,   // to_centre = C - O                 M_VSUB            7
-        CALC_ALONG  = 6'd2,   // along = to_centre . D             M_DOT fmt 1      11
-        CALC_TCSQ   = 6'd3,   // |to_centre_s|^2                   M_DOT fmt 0      11  (u,v by K)
-        CALC_INSIDE = 6'd4,   // |to_centre_s|^2 < r_s^2 ?         M_LT              3  yes: reach
-        CALC_BEHIND = 6'd5,   // along < 0 ?                       M_LT              3  yes: skip
-        CALC_M      = 6'd6,   // along x D                         M_SCAL_VEC fmt 1  7
-        CALC_OFF    = 6'd7,   // offset = along x D - to_centre    M_VSUB            7
-        CALC_OFFSQ  = 6'd8,   // |offset_s|^2                      M_DOT fmt 0      11  (u,v by K)
-        CALC_REACH  = 6'd9,   // |offset_s|^2 < r_s^2 ?            M_LT              3  yes: reach
+    typedef enum logic [6:0] {
+        CALC_R2     = 7'd0,   // r_s^2 = r_s x r_s                 M_MUL fmt 0       3
+        CALC_TC     = 7'd1,   // to_centre = C - O                 M_VSUB            7
+        CALC_ALONG  = 7'd2,   // along = to_centre . D             M_DOT fmt 1      11
+        CALC_TCSQ   = 7'd3,   // |to_centre_s|^2                   M_DOT fmt 0      11  (u,v by K)
+        CALC_INSIDE = 7'd4,   // |to_centre_s|^2 < r_s^2 ?         M_LT              3  yes: reach
+        CALC_BEHIND = 7'd5,   // along < 0 ?                       M_LT              3  yes: skip
+        CALC_M      = 7'd6,   // along x D                         M_SCAL_VEC fmt 1  7
+        CALC_OFF    = 7'd7,   // offset = along x D - to_centre    M_VSUB            7
+        CALC_OFFSQ  = 7'd8,   // |offset_s|^2                      M_DOT fmt 0      11  (u,v by K)
+        CALC_REACH  = 7'd9,   // |offset_s|^2 < r_s^2 ?            M_LT              3  yes: reach
         // Sphere test (spec 5d). The first six steps are the same walk as the
         // BV test, so they reuse the same slots; only the radius and centre
         // come from the object record instead of the BV record.
-        SP_R2       = 6'd10,  // r_s^2 = r_s x r_s                 M_MUL fmt 0       3
-        SP_TC       = 6'd11,  // to_centre = C - O                 M_VSUB            7
-        SP_ALONG    = 6'd12,  // along = to_centre . D             M_DOT fmt 1      11
-        SP_M        = 6'd13,  // along x D                         M_SCAL_VEC fmt 1  7
-        SP_OFF      = 6'd14,  // offset = along x D - to_centre    M_VSUB            7
-        SP_OFFSQ    = 6'd15,  // |offset_s|^2                      M_DOT fmt 0      11  (u,v by K)
-        SP_MISS     = 6'd16,  // |offset_s|^2 < r_s^2 ?            M_LT              3  no: miss
-        SP_HALF2    = 6'd17,  // r_s^2 - |offset_s|^2              M_SUB             3
-        SP_SQRT     = 6'd18,  // half_s = sqrt(r_s^2 - off_s^2)    M_SQRT fmt 0     25
-        SP_T        = 6'd19,  // t = along - half                  M_SUB             3  entry point
-        SP_TGATE    = 6'd20,  // 0.0156 < t ?                      M_LT              3  yes: candidate
-        SP_T2       = 6'd21,  // t = along + half                  M_ADD             3  exit point, flip 1
-        SP_TGATE2   = 6'd22,  // 0.0156 < t ?                      M_LT              3  no: miss
-        SP_BEST     = 6'd23,  // t < best t ?                      M_LT              3  yes: keep
+        SP_R2       = 7'd10,  // r_s^2 = r_s x r_s                 M_MUL fmt 0       3
+        SP_TC       = 7'd11,  // to_centre = C - O                 M_VSUB            7
+        SP_ALONG    = 7'd12,  // along = to_centre . D             M_DOT fmt 1      11
+        SP_M        = 7'd13,  // along x D                         M_SCAL_VEC fmt 1  7
+        SP_OFF      = 7'd14,  // offset = along x D - to_centre    M_VSUB            7
+        SP_OFFSQ    = 7'd15,  // |offset_s|^2                      M_DOT fmt 0      11  (u,v by K)
+        SP_MISS     = 7'd16,  // |offset_s|^2 < r_s^2 ?            M_LT              3  no: miss
+        SP_HALF2    = 7'd17,  // r_s^2 - |offset_s|^2              M_SUB             3
+        SP_SQRT     = 7'd18,  // half_s = sqrt(r_s^2 - off_s^2)    M_SQRT fmt 0     25
+        SP_T        = 7'd19,  // t = along - half                  M_SUB             3  entry point
+        SP_TGATE    = 7'd20,  // 0.0156 < t ?                      M_LT              3  yes: candidate
+        SP_T2       = 7'd21,  // t = along + half                  M_ADD             3  exit point, flip 1
+        SP_TGATE2   = 7'd22,  // 0.0156 < t ?                      M_LT              3  no: miss
+        SP_BEST     = 7'd23,  // t < best t ?                      M_LT              3  yes: keep
         // Ground test (spec 5f). Runs only when no object was hit, and only
         // when the ray points down. A clamped divide means the floor is too
         // far away, which counts as sky.
-        GR_UP       = 6'd25,  // D_z < 0 ?                         M_LT              3  no: sky
-        GR_T        = 6'd26,  // t = O_z / -D_z                    M_DIV            19
+        GR_UP       = 7'd25,  // D_z < 0 ?                         M_LT              3  no: sky
+        GR_T        = 7'd26,  // t = O_z / -D_z                    M_DIV            19
         // Winner steps (spec 5g). The hit point for every hit, then n for the
         // winner only: the ground n and the checker bit need no macro-op.
-        H1          = 6'd27,  // best t x D                        M_SCAL_VEC fmt 1  7
-        H2          = 6'd28,  // H = O + (best t x D)              M_VADD            7
-        S2          = 6'd29,  // H - C, or C - H when flip = 1     M_VSUB            7
-        S4          = 6'd30,  // n = that / r                      M_SPHERE_NORM    57
-        CALC_DONE   = 6'd63   // this BV, object or winner is finished
+        H1          = 7'd27,  // best t x D                        M_SCAL_VEC fmt 1  7
+        H2          = 7'd28,  // H = O + (best t x D)              M_VADD            7
+        S2          = 7'd29,  // H - C, or C - H when flip = 1     M_VSUB            7
+        S4          = 7'd30,  // n = that / r                      M_SPHERE_NORM    57
+        CALC_DONE   = 7'd127, // this BV, object, triangle or winner is finished
+
+        // Triangle test (spec 5e). Stage 1 asks whether the triangle is worth
+        // testing, stage 2 builds det and the top of alpha, stage 3 does the
+        // same for beta, and stage 4 turns the two fractions into a distance.
+        // The two edges stay in registers across stages 1 and 2, then each
+        // stage re-reads the one it needs at the size it needs.
+        TRI_TC      = 7'd31,  // to_corner = v0 - O                M_VSUB            7
+        TRI_ALONG   = 7'd32,  // along = to_corner . D             M_DOT fmt 1      11
+        TRI_M       = 7'd33,  // along x D                         M_SCAL_VEC fmt 1  7
+        TRI_SLID    = 7'd34,  // slid = along x D - to_corner      M_VSUB            7
+        TRI_SLIDSQ  = 7'd35,  // |slid_s|^2                        M_DOT fmt 0      11  (u,v by K)
+        TRI_FAR     = 7'd36,  // 225 < that ?                      M_LT              3  yes: miss
+        TRI_P       = 7'd37,  // P = D x e2s                       M_CROSS fmt 1    14
+        TRI_DET     = 7'd38,  // det = e1s . P                     M_DOT fmt 0      11
+        TRI_ATOP    = 7'd39,  // alpha_top = slid_s . P            M_DOT fmt 0      11
+        TRI_BACK    = 7'd40,  // det < 0 ?                         M_LT              3  yes: back side
+        TRI_NEGD    = 7'd41,  // 0 - det                           M_SUB             3  back only
+        TRI_NEGA    = 7'd42,  // 0 - alpha_top                     M_SUB             3  back only
+        TRI_DETP    = 7'd43,  // 0 < det ?                         M_LT              3  no: parallel
+        TRI_ATOPN   = 7'd44,  // alpha_top < 0 ?                   M_LT              3  yes: miss
+        TRI_DETLO   = 7'd45,  // det < alpha_top ?                 M_LT              3  yes: miss
+        TRI_Q       = 7'd46,  // Q = slid_s x e1s                  M_CROSS fmt 0    14
+        TRI_BETA    = 7'd47,  // beta_top = D . Q                  M_DOT fmt 1      11
+        TRI_NEGB    = 7'd48,  // 0 - beta_top                      M_SUB             3  back only
+        TRI_BETAN   = 7'd49,  // beta_top < 0 ?                    M_LT              3  yes: miss
+        TRI_SUM     = 7'd50,  // alpha_top + beta_top              M_ADD             3
+        TRI_SUMD    = 7'd51,  // det < that ?                      M_LT              3  yes: miss
+        TRI_ALPHA   = 7'd52,  // alpha = alpha_top / det           M_DIV            19
+        TRI_BETAD   = 7'd53,  // beta = beta_top / det             M_DIV            19
+        TRI_E1D     = 7'd54,  // e1 . D, true size                 M_DOT fmt 1      11
+        TRI_A1      = 7'd55,  // alpha x that                      M_MUL fmt 1       3
+        TRI_SUM1    = 7'd56,  // along + that                      M_ADD             3
+        TRI_E2D     = 7'd57,  // e2 . D, true size                 M_DOT fmt 1      11
+        TRI_B2      = 7'd58,  // beta x that                       M_MUL fmt 1       3
+        TRI_T       = 7'd59,  // t = step 56 + step 58             M_ADD             3
+        TRI_GATE    = 7'd60,  // 0.0156 < t ?                      M_LT              3  no: miss
+        TRI_BEST    = 7'd61,  // t < best t ?                      M_LT              3  yes: keep
+        // Triangle normal (spec 5g). u and v are the two edges, entered either
+        // way round so that a back side hit gets the arrow turned around.
+        N1_CROSS    = 7'd62,  // u x v                             M_CROSS fmt 0    14
+        N2_NORM     = 7'd63   // resize pre-shift, then length 1   M_NORM fmt 1     65
         // WiP for hit_flip
 
     } calc_stage_t;
@@ -85,20 +126,28 @@ package iu_types_pkg;
     // Phase: which memory read or step sequence is running. PH_READ is BV
     // w1-w4, PH_W0 is BV w0 (reach only), PH_OBJ is an object's w0 (type bit),
     // PH_HEAD its w3-w6, PH_SPHERE the sphere steps, the rest advance.
-    typedef enum logic [3:0] {
-        PH_READ     = 4'd0,
-        PH_CALC     = 4'd1,
-        PH_W0       = 4'd2,
-        PH_NEXT     = 4'd3,
-        PH_OBJ      = 4'd4,
-        PH_HEAD     = 4'd5,
-        PH_SPHERE   = 4'd6,
-        PH_OBJ_NEXT = 4'd7,
-        PH_GROUND   = 4'd8,   // the ground test, only when nothing was hit
-        PH_WIN      = 4'd9,   // the winner steps: H, then n
-        PH_WIN_C    = 4'd10,  // winner burst: the sphere centre w4-w6
-        PH_WIN_R    = 4'd11,  // winner burst: the sphere radius w3, unshifted
-        PH_CHECK    = 4'd12   // nothing left to do: report
+    typedef enum logic [4:0] {
+        PH_READ     = 5'd0,
+        PH_CALC     = 5'd1,
+        PH_W0       = 5'd2,
+        PH_NEXT     = 5'd3,
+        PH_OBJ      = 5'd4,
+        PH_HEAD     = 5'd5,
+        PH_SPHERE   = 5'd6,
+        PH_OBJ_NEXT = 5'd7,
+        PH_GROUND   = 5'd8,   // the ground test, only when nothing was hit
+        PH_WIN      = 5'd9,   // the winner steps: H, then n
+        PH_WIN_C    = 5'd10,  // winner burst: the sphere centre w4-w6
+        PH_WIN_R    = 5'd11,  // winner burst: the sphere radius w3, unshifted
+        PH_CHECK    = 5'd12,  // nothing left to do: report
+        PH_TRI_E    = 5'd13,  // triangle: both edges w3-w8, which is where K comes from
+        PH_TRI_V    = 5'd14,  // triangle: the corner w9-w11
+        PH_TRI      = 5'd15,  // triangle: walk the step chain
+        PH_TRI_E1B  = 5'd16,  // triangle stage 3: edge 1 again
+        PH_TRI_E1C  = 5'd17,  // triangle stage 4: edge 1 at its true size
+        PH_TRI_E2C  = 5'd18,  // triangle stage 4: edge 2 at its true size
+        PH_NORM_U   = 5'd19,  // triangle normal: both edges again
+        PH_NORM     = 5'd20   // triangle normal: cross, then resize
     } bv_phase_t;
 endpackage
 /* verilator lint_on DECLFILENAME */
@@ -178,24 +227,48 @@ module intersection_unit #(
     // ------------------------------------------------------------------
     // Bits 14..1 of the one-hot. Bit 0 is not built: if the highest set bit is
     // position 0 then every index bit is 0 anyway, so it feeds nothing.
-    logic [14:1] lof_prio;   // one-hot: the highest set bit of sram_data[14:0]
+    logic [14:1] lof_prio;   // one-hot: the highest set bit of the value below
     logic [3:0]  lof_index;  // that bit's position
 
+    // Two things ask for a size: the radius word as it lands, and, for a
+    // triangle, the largest of its six edge parts. The second rule is one off
+    // because K = msb(largest edge) - 9 instead of the radius - 10.
+    logic [14:1] lof_in;   // bit 0 feeds no index bit, so it is not carried
+    logic        tri_edge_rd;               // the six-word edge burst is running
+    logic [14:0] tri_mag_next;
+
+    logic        norm_rd;                   // the triangle normal is being scaled
+    /* verilator lint_off UNUSEDSIGNAL */   // bit 0 feeds no index bit, as above
+    logic [14:0] norm_mag;                  // largest part of the cross product
+    /* verilator lint_on UNUSEDSIGNAL */
+
+    assign norm_rd      = (calc_stage_q == N2_NORM);
+    assign norm_mag     = max15(max15(abs15(slot_c), abs15(slot_d)), abs15(slot_e));
+    assign tri_edge_rd  = (bv_phase == PH_TRI_E);
+    assign tri_mag_next = max15(tri_mag, abs15(sram_data));
+    assign lof_in       = norm_rd    ? norm_mag[14:1] :
+                          (tri_edge_rd ? tri_mag_next[14:1] : sram_data[14:1]);
+
+    // spec 6.4: k = highest bit of the largest part - 13, so the arrow reads as
+    // DIR and its largest part lands between 0.5 and 1
+    logic signed [4:0] pre_k;
+    assign pre_k        = $signed({1'b0, lof_index}) - 5'sd13;
+
     // Priority: a bit survives only when nothing above it is set
-    assign lof_prio[14] = sram_data[14];
-    assign lof_prio[13] = sram_data[13] & ~(|sram_data[14:14]);
-    assign lof_prio[12] = sram_data[12] & ~(|sram_data[14:13]);
-    assign lof_prio[11] = sram_data[11] & ~(|sram_data[14:12]);
-    assign lof_prio[10] = sram_data[10] & ~(|sram_data[14:11]);
-    assign lof_prio[9]  = sram_data[9]  & ~(|sram_data[14:10]);
-    assign lof_prio[8]  = sram_data[8]  & ~(|sram_data[14:9]);
-    assign lof_prio[7]  = sram_data[7]  & ~(|sram_data[14:8]);
-    assign lof_prio[6]  = sram_data[6]  & ~(|sram_data[14:7]);
-    assign lof_prio[5]  = sram_data[5]  & ~(|sram_data[14:6]);
-    assign lof_prio[4]  = sram_data[4]  & ~(|sram_data[14:5]);
-    assign lof_prio[3]  = sram_data[3]  & ~(|sram_data[14:4]);
-    assign lof_prio[2]  = sram_data[2]  & ~(|sram_data[14:3]);
-    assign lof_prio[1]  = sram_data[1]  & ~(|sram_data[14:2]);
+    assign lof_prio[14] = lof_in[14];
+    assign lof_prio[13] = lof_in[13] & ~(|lof_in[14:14]);
+    assign lof_prio[12] = lof_in[12] & ~(|lof_in[14:13]);
+    assign lof_prio[11] = lof_in[11] & ~(|lof_in[14:12]);
+    assign lof_prio[10] = lof_in[10] & ~(|lof_in[14:11]);
+    assign lof_prio[9]  = lof_in[9]  & ~(|lof_in[14:10]);
+    assign lof_prio[8]  = lof_in[8]  & ~(|lof_in[14:9]);
+    assign lof_prio[7]  = lof_in[7]  & ~(|lof_in[14:8]);
+    assign lof_prio[6]  = lof_in[6]  & ~(|lof_in[14:7]);
+    assign lof_prio[5]  = lof_in[5]  & ~(|lof_in[14:6]);
+    assign lof_prio[4]  = lof_in[4]  & ~(|lof_in[14:5]);
+    assign lof_prio[3]  = lof_in[3]  & ~(|lof_in[14:4]);
+    assign lof_prio[2]  = lof_in[2]  & ~(|lof_in[14:3]);
+    assign lof_prio[1]  = lof_in[1]  & ~(|lof_in[14:2]);
 
     // One-hot to index: one OR per index bit
     assign lof_index[0] = lof_prio[1]  | lof_prio[3]  | lof_prio[5]  | lof_prio[7]  |
@@ -229,6 +302,20 @@ module intersection_unit #(
         end
     endfunction
 
+    // True magnitude of an edge word, for the triangle's K rule
+    function automatic logic [14:0] abs15(input logic [15:0] v);
+        logic signed [16:0] w;
+        begin
+            w = v[15] ? -$signed({v[15], v}) : $signed({1'b0, v});
+            if (w > 17'sd32767) abs15 = 15'h7FFF;
+            else                abs15 = w[14:0];
+        end
+    endfunction
+
+    function automatic logic [14:0] max15(input logic [14:0] a, input logic [14:0] b);
+        max15 = (a > b) ? a : b;
+    endfunction
+
     // Two's complement with the POS clamp, used for the negated ground divisor
     function automatic logic [15:0] neg16(input logic [15:0] v);
         logic signed [16:0] w;
@@ -259,15 +346,26 @@ module intersection_unit #(
         SRC_OZ,     // only the z part of the ray origin
         SRC_RADIUS, // the raw radius of the winner, unshifted
         SRC_WA,     // winner: H, or C when the ray started inside
-        SRC_WB      // winner: C, or H when the ray started inside
+        SRC_WB,     // winner: C, or H when the ray started inside
+        SRC_C225,   // constant 225 (0x7080), the 15-unit triangle gate
+        SRC_DET,    // det, then the partial distance in stage 4
+        SRC_ATOP,   // alpha_top, then alpha
+        SRC_BTOP,   // beta_top, then beta
+        SRC_E1,     // edge 1 while det is being built
+        SRC_NA,     // normal: u, which is edge 1 for a front side hit
+        SRC_NB,     // normal: v, which is edge 2 for a front side hit
+        SRC_ONE     // constant 1.0 in DIR, 0x4000, for M_NORM
     } src_t;
 
     // How a request field goes through the size shifter: untouched, by +K
     // (into a squared compare) or by -K (shifting a result back)
-    typedef enum logic [1:0] {
-        SH_NONE = 2'd0,
-        SH_K    = 2'd1,
-        SH_NK   = 2'd2
+    typedef enum logic [2:0] {
+        SH_NONE = 3'd0,
+        SH_K    = 3'd1,
+        SH_NK   = 3'd2,
+        SH_PRE  = 3'd3,  // the resize pre-shift before M_NORM, which also
+                         // turns a POS arrow into a DIR arrow
+        SH_BK   = 3'd4   // the winner's K, for re-reading its edges
     } shift_t;
 
 
@@ -465,6 +563,39 @@ module intersection_unit #(
             H2:          calc_stage_d = CALC_DONE;
             S2:          calc_stage_d = CALC_DONE;
             S4:          calc_stage_d = CALC_DONE;
+            TRI_TC:      calc_stage_d = TRI_ALONG;
+            TRI_ALONG:   calc_stage_d = TRI_M;
+            TRI_M:       calc_stage_d = TRI_SLID;
+            TRI_SLID:    calc_stage_d = TRI_SLIDSQ;
+            TRI_SLIDSQ:  calc_stage_d = TRI_FAR;
+            TRI_FAR:     calc_stage_d = TRI_P;          // overridden by the 225 gate
+            TRI_P:       calc_stage_d = TRI_DET;
+            TRI_DET:     calc_stage_d = TRI_ATOP;
+            TRI_ATOP:    calc_stage_d = TRI_BACK;
+            TRI_BACK:    calc_stage_d = TRI_NEGD;       // the front side skips the negates
+            TRI_NEGD:    calc_stage_d = TRI_NEGA;
+            TRI_NEGA:    calc_stage_d = TRI_DETP;
+            TRI_DETP:    calc_stage_d = TRI_ATOPN;
+            TRI_ATOPN:   calc_stage_d = TRI_DETLO;
+            TRI_DETLO:   calc_stage_d = CALC_DONE;      // the phase block fetches edge 1
+            TRI_Q:       calc_stage_d = TRI_BETA;
+            TRI_BETA:    calc_stage_d = TRI_NEGB;       // the front side skips the negate
+            TRI_NEGB:    calc_stage_d = TRI_BETAN;
+            TRI_BETAN:   calc_stage_d = TRI_SUM;
+            TRI_SUM:     calc_stage_d = TRI_SUMD;
+            TRI_SUMD:    calc_stage_d = TRI_ALPHA;      // stage 3 passed: on to the distance
+            TRI_ALPHA:   calc_stage_d = TRI_BETAD;
+            TRI_BETAD:   calc_stage_d = CALC_DONE;      // the phase block fetches edge 1
+            TRI_E1D:     calc_stage_d = TRI_A1;
+            TRI_A1:      calc_stage_d = TRI_SUM1;
+            TRI_SUM1:    calc_stage_d = CALC_DONE;      // the phase block fetches edge 2
+            TRI_E2D:     calc_stage_d = TRI_B2;
+            TRI_B2:      calc_stage_d = TRI_T;
+            TRI_T:       calc_stage_d = TRI_GATE;
+            TRI_GATE:    calc_stage_d = TRI_BEST;
+            TRI_BEST:    calc_stage_d = CALC_DONE;
+            N1_CROSS:    calc_stage_d = N2_NORM;
+            N2_NORM:     calc_stage_d = CALC_DONE;
             default:     calc_stage_d = CALC_DONE;
         endcase
 
@@ -475,6 +606,8 @@ module intersection_unit #(
             if (calc_stage_q == SP_TGATE   && resp_result[0])  calc_stage_d = SP_BEST;
             if (calc_stage_q == SP_TGATE2  && !resp_result[0]) calc_stage_d = CALC_DONE;
             if (calc_stage_q == GR_UP      && !resp_result[0]) calc_stage_d = CALC_DONE;
+            if (calc_stage_q == TRI_BACK   && !resp_result[0]) calc_stage_d = TRI_DETP;
+            if (calc_stage_q == TRI_BETA   && !tri_back)       calc_stage_d = TRI_BETAN;
         end
     end
 
@@ -560,6 +693,48 @@ module intersection_unit #(
             S2:          begin opcode = M_VSUB;     fmt = 1'b0; src_u = SRC_WA;    src_v = SRC_WB;    end
             // 4. n = that / r. Field u.x holds the raw radius, no K shift
             S4:          begin opcode = M_SPHERE_NORM; fmt = 1'b0; src_u = SRC_RADIUS; src_v = SRC_PRV; end
+
+            // --- triangle test (spec 5e) ---
+            // stage 1: is this triangle even worth testing?
+            TRI_TC:      begin opcode = M_VSUB;     fmt = 1'b0; src_u = SRC_TC;    src_v = SRC_O;     end
+            TRI_ALONG:   begin opcode = M_DOT;      fmt = 1'b1; src_u = SRC_TC;    src_v = SRC_D;     end
+            TRI_M:       begin opcode = M_SCAL_VEC; fmt = 1'b1; src_u = SRC_ALONG; src_v = SRC_D;     end
+            TRI_SLID:    begin opcode = M_VSUB;     fmt = 1'b0; src_u = SRC_PRV;   src_v = SRC_TC;    end
+            TRI_SLIDSQ:  begin opcode = M_DOT;      fmt = 1'b0; src_u = SRC_TC;    src_v = SRC_TC;    sh_u = SH_K; sh_v = SH_K; end
+            TRI_FAR:     begin opcode = M_LT;       fmt = 1'b0; src_u = SRC_C225;  src_v = SRC_PRV;   end
+            // stage 2: P, det and the top of alpha, all from the two edges that
+            // are still sitting in registers since the first burst
+            TRI_P:       begin opcode = M_CROSS;    fmt = 1'b1; src_u = SRC_D;     src_v = SRC_C;     sh_v = SH_K; end
+            TRI_DET:     begin opcode = M_DOT;      fmt = 1'b0; src_u = SRC_E1;    src_v = SRC_C;     sh_u = SH_K; end
+            TRI_ATOP:    begin opcode = M_DOT;      fmt = 1'b0; src_u = SRC_TC;    src_v = SRC_C;     sh_u = SH_K; end
+            TRI_BACK:    begin opcode = M_LT;       fmt = 1'b0; src_u = SRC_DET;   src_v = SRC_ZERO;  end
+            TRI_NEGD:    begin opcode = M_SUB;      fmt = 1'b0; src_u = SRC_ZERO;  src_v = SRC_DET;   end
+            TRI_NEGA:    begin opcode = M_SUB;      fmt = 1'b0; src_u = SRC_ZERO;  src_v = SRC_ATOP;  end
+            TRI_DETP:    begin opcode = M_LT;       fmt = 1'b0; src_u = SRC_ZERO;  src_v = SRC_DET;   end
+            TRI_ATOPN:   begin opcode = M_LT;       fmt = 1'b0; src_u = SRC_ATOP;  src_v = SRC_ZERO;  end
+            TRI_DETLO:   begin opcode = M_LT;       fmt = 1'b0; src_u = SRC_DET;   src_v = SRC_ATOP;  end
+            // stage 3: the same for beta, with edge 1 fetched again
+            TRI_Q:       begin opcode = M_CROSS;    fmt = 1'b0; src_u = SRC_TC;    src_v = SRC_C;     sh_u = SH_K; sh_v = SH_K; end
+            TRI_BETA:    begin opcode = M_DOT;      fmt = 1'b1; src_u = SRC_D;     src_v = SRC_PRV;   end
+            TRI_NEGB:    begin opcode = M_SUB;      fmt = 1'b0; src_u = SRC_ZERO;  src_v = SRC_BTOP;  end
+            TRI_BETAN:   begin opcode = M_LT;       fmt = 1'b0; src_u = SRC_BTOP;  src_v = SRC_ZERO;  end
+            TRI_SUM:     begin opcode = M_ADD;      fmt = 1'b0; src_u = SRC_ATOP;  src_v = SRC_BTOP;  end
+            TRI_SUMD:    begin opcode = M_LT;       fmt = 1'b0; src_u = SRC_DET;   src_v = SRC_PRV;   end
+            // stage 4: the two fractions become a distance
+            TRI_ALPHA:   begin opcode = M_DIV;      fmt = 1'b0; src_u = SRC_ATOP;  src_v = SRC_DET;   end
+            TRI_BETAD:   begin opcode = M_DIV;      fmt = 1'b0; src_u = SRC_BTOP;  src_v = SRC_DET;   end
+            TRI_E1D:     begin opcode = M_DOT;      fmt = 1'b1; src_u = SRC_TC;    src_v = SRC_D;     end
+            TRI_A1:      begin opcode = M_MUL;      fmt = 1'b1; src_u = SRC_ATOP;  src_v = SRC_PRV;   end
+            TRI_SUM1:    begin opcode = M_ADD;      fmt = 1'b0; src_u = SRC_ALONG; src_v = SRC_PRV;   end
+            TRI_E2D:     begin opcode = M_DOT;      fmt = 1'b1; src_u = SRC_C;     src_v = SRC_D;     end
+            TRI_B2:      begin opcode = M_MUL;      fmt = 1'b1; src_u = SRC_BTOP;  src_v = SRC_PRV;   end
+            TRI_T:       begin opcode = M_ADD;      fmt = 1'b0; src_u = SRC_DET;   src_v = SRC_PRV;   end
+            TRI_GATE:    begin opcode = M_LT;       fmt = 1'b0; src_u = SRC_C0156; src_v = SRC_T;     end
+            TRI_BEST:    begin opcode = M_LT;       fmt = 1'b0; src_u = SRC_T;     src_v = SRC_BESTT; end
+
+            // --- triangle normal (spec 5g) ---
+            N1_CROSS:    begin opcode = M_CROSS;    fmt = 1'b0; src_u = SRC_NA;    src_v = SRC_NB;    sh_u = SH_BK; sh_v = SH_BK; end
+            N2_NORM:     begin opcode = M_NORM;     fmt = 1'b1; src_u = SRC_C;     src_v = SRC_ONE;   sh_u = SH_PRE; end
             default:     ;
         endcase
     end
@@ -587,12 +762,39 @@ module intersection_unit #(
             // subtract gives H - C outside the surface and C - H inside it
             SRC_WA:    src_sel = best_flip_q ? {slot_c, slot_d, slot_e} : hit_point_q;
             SRC_WB:    src_sel = best_flip_q ? hit_point_q : {slot_c, slot_d, slot_e};
+            SRC_C225:  src_sel = {16'd0, 16'd0, 16'h7080};
+            SRC_DET:   src_sel = {16'd0, 16'd0, slot_i};
+            SRC_ATOP:  src_sel = {16'd0, 16'd0, slot_b};
+            SRC_BTOP:  src_sel = {16'd0, 16'd0, slot_j};
+            // e1 lives with alpha and beta because it dies the moment det is
+            // built, and alpha_top takes its place
+            SRC_E1:    src_sel = {slot_b, slot_j, slot_k};
+            // The two edges enter the cross product either way round: swapping
+            // the operands of a cross product turns the result around, which is
+            // exactly what a back side hit needs
+            SRC_NA:    src_sel = best_flip_q ? {slot_c, slot_d, slot_e} : {slot_f, slot_g, slot_h};
+            SRC_NB:    src_sel = best_flip_q ? {slot_f, slot_g, slot_h} : {slot_c, slot_d, slot_e};
+            SRC_ONE:   src_sel = {16'd0, 16'd0, 16'h4000};
             default:   src_sel = 48'd0;
         endcase
     endfunction
 
     assign u_raw = src_sel(src_u);
     assign v_raw = src_sel(src_v);
+
+    // How far a field shifts: K for a squared compare, -K to undo it, and the
+    // resize pre-shift for the triangle normal
+    function automatic logic signed [4:0] sh_amt(input shift_t s);
+        begin
+            case (s)
+                SH_K:   sh_amt = k_q;
+                SH_NK:  sh_amt = -k_q;
+                SH_PRE: sh_amt = pre_k;
+                SH_BK:  sh_amt = best_k_q;
+                default: sh_amt = 5'sd0;
+            endcase
+        end
+    endfunction
 
     // The size shifter sits between the scratch registers and the request, so
     // the K shift costs no cycles. SH_NK shifts a result back by -K, which is
@@ -602,14 +804,14 @@ module intersection_unit #(
         v_vec = v_raw;
 
         if (sh_u != SH_NONE) begin
-            u_vec[47:32] = kshift($signed(u_raw[47:32]), (sh_u == SH_NK) ? -k_q : k_q);
-            u_vec[31:16] = kshift($signed(u_raw[31:16]), (sh_u == SH_NK) ? -k_q : k_q);
-            u_vec[15:0]  = kshift($signed(u_raw[15:0]),  (sh_u == SH_NK) ? -k_q : k_q);
+            u_vec[47:32] = kshift($signed(u_raw[47:32]), sh_amt(sh_u));
+            u_vec[31:16] = kshift($signed(u_raw[31:16]), sh_amt(sh_u));
+            u_vec[15:0]  = kshift($signed(u_raw[15:0]),  sh_amt(sh_u));
         end
         if (sh_v != SH_NONE) begin
-            v_vec[47:32] = kshift($signed(v_raw[47:32]), (sh_v == SH_NK) ? -k_q : k_q);
-            v_vec[31:16] = kshift($signed(v_raw[31:16]), (sh_v == SH_NK) ? -k_q : k_q);
-            v_vec[15:0]  = kshift($signed(v_raw[15:0]),  (sh_v == SH_NK) ? -k_q : k_q);
+            v_vec[47:32] = kshift($signed(v_raw[47:32]), sh_amt(sh_v));
+            v_vec[31:16] = kshift($signed(v_raw[31:16]), sh_amt(sh_v));
+            v_vec[15:0]  = kshift($signed(v_raw[15:0]),  sh_amt(sh_v));
         end
 
         // Negate on the way in, which is where the ground test makes its
@@ -672,6 +874,9 @@ module intersection_unit #(
     logic [47:0] hit_point_q;   // H, POS
     logic [47:0] n_q;           // the out-arrow, DIR
     logic        hit_ground_q;  // the winner is the ground
+    logic        tri_back;      // the triangle under test is back-facing
+    logic [4:0]  best_k_q;      // the winner's K, to re-read a triangle's edges
+    logic [14:0] tri_mag;       // largest edge part seen in this triangle's burst
     // Request construction
     src_t         src_u, src_v;
     shift_t       sh_u, sh_v;
@@ -690,7 +895,8 @@ module intersection_unit #(
     assign resp_ready = 1'b1;   // spec 5.5: tied high, the Decode leaves on it
     assign step_done  = (dec_state_q == S_DEC_WAIT) && resp_valid;
     assign calc_active = (bv_phase == PH_CALC) || (bv_phase == PH_SPHERE) ||
-                         (bv_phase == PH_GROUND) || (bv_phase == PH_WIN);
+                         (bv_phase == PH_GROUND) || (bv_phase == PH_WIN) ||
+                         (bv_phase == PH_TRI)    || (bv_phase == PH_NORM);
 
     // 2 cycles per word: the pulse travels with the capture of the word before
     assign sram_rd = (sram_state_q == S_SRAM_SEND) ||
@@ -702,14 +908,17 @@ module intersection_unit #(
                         (sram_state_q == S_SRAM_IDLE) &&
                         ((bv_phase == PH_READ)   || (bv_phase == PH_W0) ||
                          (bv_phase == PH_OBJ)    || (bv_phase == PH_HEAD) ||
-                         (bv_phase == PH_WIN_C)  || (bv_phase == PH_WIN_R));
+                         (bv_phase == PH_WIN_C)  || (bv_phase == PH_WIN_R)  ||
+                         (bv_phase == PH_TRI_E)  || (bv_phase == PH_TRI_V)   ||
+                         (bv_phase == PH_TRI_E1B)|| (bv_phase == PH_TRI_E1C) ||
+                         (bv_phase == PH_TRI_E2C) || (bv_phase == PH_NORM_U));
 
     // K and r_s for the BV under test, taken from the radius word as it lands
     // (spec 5d: K = highest 1 bit of the raw radius - 10, so r_s is 8 to 16)
     logic signed [4:0] k_next;
     logic [15:0]       rs_next;
 
-    assign k_next  = $signed({1'b0, lof_index}) - 5'sd10;
+    assign k_next  = $signed({1'b0, lof_index}) - (tri_edge_rd ? 5'sd9 : 5'sd10);
     assign rs_next = kshift($signed(sram_data), k_next);
 
 
@@ -830,6 +1039,44 @@ module intersection_unit #(
                                 sram_w_index <= 3'd0;
                                 sram_w_last  <= 3'd0;
                             end
+                            // triangle: both edges w3-w8. This is the burst that
+                            // decides K, so it finishes before anything is shifted
+                            PH_TRI_E: begin
+                                sram_addr    <= obj_addr_q + 9'd3;
+                                sram_w_index <= 3'd1;
+                                sram_w_last  <= 3'd6;
+                                tri_mag      <= 15'd0;
+                            end
+                            // triangle: the corner w9-w11
+                            PH_TRI_V: begin
+                                sram_addr    <= obj_addr_q + 9'd9;
+                                sram_w_index <= 3'd1;
+                                sram_w_last  <= 3'd3;
+                            end
+                            // triangle stages 3 and 4: edge 1, then edge 2,
+                            // each fetched at the size that stage needs
+                            PH_TRI_E1B: begin
+                                sram_addr    <= obj_addr_q + 9'd6;
+                                sram_w_index <= 3'd1;
+                                sram_w_last  <= 3'd3;
+                            end
+                            PH_TRI_E1C: begin
+                                sram_addr    <= obj_addr_q + 9'd6;
+                                sram_w_index <= 3'd1;
+                                sram_w_last  <= 3'd3;
+                            end
+                            PH_TRI_E2C: begin
+                                sram_addr    <= obj_addr_q + 9'd3;
+                                sram_w_index <= 3'd1;
+                                sram_w_last  <= 3'd3;
+                            end
+                            // triangle normal: both edges of the winner, read
+                            // again because the test did not keep them
+                            PH_NORM_U: begin
+                                sram_addr    <= hit_addr + 9'd3;
+                                sram_w_index <= 3'd1;
+                                sram_w_last  <= 3'd6;
+                            end
                             default: begin
                                 sram_addr    <= bv_base + 9'd1;
                                 sram_w_index <= 3'd1;
@@ -851,6 +1098,52 @@ module intersection_unit #(
                         // held for the phase block, which latches w0 a cycle later
                         sram_word_q <= sram_data;
 
+                        // Triangle bursts land by phase: the same words are read
+                        // into different registers at different stages, so the
+                        // index alone does not say where they go
+                        if (bv_phase == PH_TRI_E) begin
+                            tri_mag <= tri_mag_next;
+                            case (sram_w_index)
+                                3'd1: slot_c <= sram_data;  // edge 2 z
+                                3'd2: slot_d <= sram_data;  // edge 2 y
+                                3'd3: slot_e <= sram_data;  // edge 2 x
+                                3'd4: slot_b <= sram_data;  // edge 1 z
+                                3'd5: slot_j <= sram_data;  // edge 1 y
+                                3'd6: slot_k <= sram_data;  // edge 1 x
+                                default: ;
+                            endcase
+                        end else if (bv_phase == PH_TRI_V) begin
+                            case (sram_w_index)
+                                3'd1: slot_f <= sram_data;  // corner z
+                                3'd2: slot_g <= sram_data;  // corner y
+                                3'd3: slot_h <= sram_data;  // corner x
+                                default: ;
+                            endcase
+                        end else if (bv_phase == PH_TRI_E1C) begin
+                            case (sram_w_index)
+                                3'd1: slot_f <= sram_data;  // edge 1 z
+                                3'd2: slot_g <= sram_data;  // edge 1 y
+                                3'd3: slot_h <= sram_data;  // edge 1 x
+                                default: ;
+                            endcase
+                        end else if (bv_phase == PH_NORM_U) begin
+                            case (sram_w_index)
+                                3'd1: slot_c <= sram_data;  // edge 2 z
+                                3'd2: slot_d <= sram_data;  // edge 2 y
+                                3'd3: slot_e <= sram_data;  // edge 2 x
+                                3'd4: slot_f <= sram_data;  // edge 1 z
+                                3'd5: slot_g <= sram_data;  // edge 1 y
+                                3'd6: slot_h <= sram_data;  // edge 1 x
+                                default: ;
+                            endcase
+                        end else if (bv_phase == PH_TRI_E1B || bv_phase == PH_TRI_E2C) begin
+                            case (sram_w_index)
+                                3'd1: slot_c <= sram_data;  // edge 1, then edge 2: z
+                                3'd2: slot_d <= sram_data;  // y
+                                3'd3: slot_e <= sram_data;  // x
+                                default: ;
+                            endcase
+                        end else begin
                         // BV dimensional property for calculation latch on S_DEC_IDLE
                         case (sram_w_index)
                             3'd0: begin
@@ -872,6 +1165,7 @@ module intersection_unit #(
                             end
                             default: ;
                         endcase
+                        end
 
                         if (sram_w_index == sram_w_last) begin
                             sram_read <= 1'b1;
@@ -934,6 +1228,9 @@ module intersection_unit #(
             hit_addr     <= 9'd0;
             bv_phase     <= PH_READ;
             calc_stage_q <= CALC_R2;
+            tri_back     <= 1'b0;
+            tri_mag      <= 15'd0;
+            best_k_q     <= 5'sd0;
 
         end else if (start) begin
             // Reset the BV loop for a new ray
@@ -951,6 +1248,9 @@ module intersection_unit #(
             n_q          <= 48'd0;
             hit_ground_q <= 1'b0;
             hit_addr     <= 9'd0;
+            tri_back     <= 1'b0;
+            tri_mag      <= 15'd0;
+            best_k_q     <= 5'sd0;
             // a scene with no BVs goes straight to the ground test
             bv_phase     <= (bv_count == 5'd0) ? PH_GROUND : PH_READ;
             calc_stage_q <= (bv_count == 5'd0) ? GR_UP     : CALC_R2;
@@ -962,7 +1262,8 @@ module intersection_unit #(
             // Every object starts at SP_R2; a step advances only when its
             // macro-op result lands
             if (bv_phase == PH_CALC || bv_phase == PH_SPHERE ||
-                bv_phase == PH_GROUND || bv_phase == PH_WIN) begin
+                bv_phase == PH_GROUND || bv_phase == PH_WIN ||
+                bv_phase == PH_TRI    || bv_phase == PH_NORM) begin
                 if (step_done) calc_stage_q <= calc_stage_d;
             end else if (bv_phase == PH_HEAD) begin
                 calc_stage_q <= SP_R2;
@@ -1181,6 +1482,171 @@ module intersection_unit #(
                                 n_q          <= resp_result;
                             end
 
+                            // triangle test (spec 5e). Edge 1 shares its three
+                            // registers with alpha and beta, because it dies the
+                            // moment det is built and they take its place.
+                            TRI_TC: begin
+                                // Latch result (Vector 3): the corner arrow
+                                {slot_f, slot_g, slot_h} <= resp_result;
+                            end
+
+                            TRI_ALONG: begin
+                                // Latch result (Scalar)
+                                slot_a       <= resp_result [15:0];
+                            end
+
+                            TRI_M: begin
+                                // Nothing to keep: TRI_SLID reads result_q
+                            end
+
+                            TRI_SLID: begin
+                                // Latch result (Vector 3): slid replaces to_corner
+                                {slot_f, slot_g, slot_h} <= resp_result;
+                            end
+
+                            TRI_SLIDSQ: begin
+                                // Nothing to keep: TRI_FAR reads result_q
+                            end
+
+                            TRI_FAR: begin
+                                // Latch result (Compare): the phase block reads it
+                            end
+
+                            TRI_P: begin
+                                // Latch result (Vector 3): P replaces edge 2
+                                {slot_c, slot_d, slot_e} <= resp_result;
+                            end
+
+                            TRI_DET: begin
+                                // Latch result (Scalar): the bottom of both fractions
+                                slot_i       <= resp_result [15:0];
+                            end
+
+                            TRI_ATOP: begin
+                                // Latch result (Scalar): edge 1 is dead here
+                                slot_b       <= resp_result [15:0];
+                            end
+
+                            TRI_BACK: begin
+                                // Latch result (Compare): a negative det is a back side hit
+                                if (resp_result[0]) begin
+                                    tri_back  <= 1'b1;
+                                    cand_flip <= 1'b1;
+                                end
+                            end
+
+                            TRI_NEGD: begin
+                                // Latch result (Scalar): det made positive
+                                slot_i       <= resp_result [15:0];
+                            end
+
+                            TRI_NEGA: begin
+                                // Latch result (Scalar): alpha_top made positive
+                                slot_b       <= resp_result [15:0];
+                            end
+
+                            TRI_DETP: begin
+                                // Latch result (Compare): a zero det means parallel
+                            end
+
+                            TRI_ATOPN: begin
+                                // Latch result (Compare)
+                            end
+
+                            TRI_DETLO: begin
+                                // Latch result (Compare)
+                            end
+
+                            TRI_Q: begin
+                                // Nothing to keep: TRI_BETA reads result_q
+                            end
+
+                            TRI_BETA: begin
+                                // Latch result (Scalar)
+                                slot_j       <= resp_result [15:0];
+                            end
+
+                            TRI_NEGB: begin
+                                // Latch result (Scalar): beta_top made positive
+                                slot_j       <= resp_result [15:0];
+                            end
+
+                            TRI_BETAN: begin
+                                // Latch result (Compare)
+                            end
+
+                            TRI_SUM: begin
+                                // Nothing to keep: TRI_SUMD reads result_q
+                            end
+
+                            TRI_SUMD: begin
+                                // Latch result (Compare)
+                            end
+
+                            TRI_ALPHA: begin
+                                // Latch result (Direct): alpha, 0 to 1
+                                slot_b       <= resp_result [15:0];
+                            end
+
+                            TRI_BETAD: begin
+                                // Latch result (Direct): beta, 0 to 1
+                                slot_j       <= resp_result [15:0];
+                            end
+
+                            TRI_E1D: begin
+                                // Nothing to keep: TRI_A1 reads result_q
+                            end
+
+                            TRI_A1: begin
+                                // Nothing to keep: TRI_SUM1 reads result_q
+                            end
+
+                            TRI_SUM1: begin
+                                // Latch result (Scalar): det is dead, the partial sum takes it
+                                slot_i       <= resp_result [15:0];
+                            end
+
+                            TRI_E2D: begin
+                                // Nothing to keep: TRI_B2 reads result_q
+                            end
+
+                            TRI_B2: begin
+                                // Nothing to keep: TRI_T reads result_q
+                            end
+
+                            TRI_T: begin
+                                // Latch result (Scalar): the candidate distance
+                                slot_k       <= resp_result [15:0];
+                            end
+
+                            TRI_GATE: begin
+                                // Latch result (Compare)
+                            end
+
+                            TRI_BEST: begin
+                                // Latch result (Compare): closer than the best so far
+                                if (resp_result[0]) begin
+                                    best_t_q    <= slot_k;
+                                    hit_addr    <= obj_addr_q;
+                                    best_flip_q <= cand_flip;
+                                    best_type_q <= 1'b1;
+                                    best_k_q    <= k_q;
+                                    hit_any_q   <= 1'b1;
+                                end
+                            end
+
+                            // triangle normal (spec 5g)
+                            N1_CROSS: begin
+                                // Latch result (Vector 3): the arrow out of the face
+                                {slot_c, slot_d, slot_e} <= resp_result;
+                            end
+
+                            N2_NORM: begin
+                                // Latch result (Vector 3): length 1, held until
+                                // the next start
+                                n_q          <= resp_result;
+                            end
+
                             // WiP for hit_flip
 
                             default: ;
@@ -1212,11 +1678,11 @@ module intersection_unit #(
                              obj_cnt_q  <= sram_word_q[6:0];
                              bv_phase   <= (sram_word_q[6:0] != 7'd0) ? PH_OBJ : PH_NEXT;
                          end
-                // w0 of one object: bit 0 picks sphere or triangle. The triangle
-                // test is still a WiP, so a triangle is stepped over for now.
+                // w0 of one object: bit 0 picks sphere or triangle
                 PH_OBJ:  if (sram_read) begin
                              obj_tri  <= ~sram_word_q[0];
-                             bv_phase <= sram_word_q[0] ? PH_HEAD : PH_OBJ_NEXT;
+                             tri_back <= 1'b0;
+                             bv_phase <= sram_word_q[0] ? PH_HEAD : PH_TRI_E;
                          end
                 // w3-w6 of the object: radius first, then the centre
                 PH_HEAD: if (sram_read) bv_phase <= PH_SPHERE;
@@ -1253,7 +1719,9 @@ module intersection_unit #(
                                if (calc_stage_q == GR_UP && !resp_result[0]) begin
                                    bv_phase <= PH_CHECK;   // the ray points up: sky
                                end else if (calc_stage_q == GR_T) begin
-                                   if (resp_result[15:0] != 16'h7FFF) begin
+                                   // the clamp means too far, and a negative
+                                   // quotient means the floor is behind the beam
+                                   if (resp_result[15:0] != 16'h7FFF && !resp_result[15]) begin
                                        // floor at this distance, and it wins because
                                        // no object was found
                                        best_t_q     <= resp_result[15:0];
@@ -1270,9 +1738,11 @@ module intersection_unit #(
                 // winner steps (spec 5g): the hit point first, then n
                 PH_WIN: if (step_done) begin
                             if (calc_stage_q == H2) begin
-                                // the ground n is a constant; a triangle n path is
-                                // the next feature, so only a sphere rebuilds here
-                                bv_phase <= (hit_ground_q || best_type_q) ? PH_CHECK : PH_WIN_C;
+                                // the ground n is a constant; a sphere rebuilds
+                                // from its centre, a triangle from its edges
+                                if (hit_ground_q)     bv_phase <= PH_CHECK;
+                                else if (best_type_q) bv_phase <= PH_NORM_U;
+                                else                  bv_phase <= PH_WIN_C;
                             end else if (calc_stage_q == S2) begin
                                 bv_phase <= PH_WIN_R;
                             end else if (calc_stage_q == S4) begin
@@ -1287,6 +1757,47 @@ module intersection_unit #(
                               bv_phase     <= PH_WIN;
                               calc_stage_q <= S4;
                           end
+                // triangle: both edges first, because K comes from them and
+                // nothing may be shifted before it is known
+                PH_TRI_E:   if (sram_read) bv_phase <= PH_TRI_V;
+                PH_TRI_V:   if (sram_read) begin
+                                bv_phase     <= PH_TRI;
+                                calc_stage_q <= TRI_TC;
+                            end
+                PH_TRI_E1B: if (sram_read) begin
+                                bv_phase     <= PH_TRI;
+                                calc_stage_q <= TRI_Q;
+                            end
+                PH_TRI_E1C: if (sram_read) begin
+                                bv_phase     <= PH_TRI;
+                                calc_stage_q <= TRI_E1D;
+                            end
+                PH_TRI_E2C: if (sram_read) begin
+                                bv_phase     <= PH_TRI;
+                                calc_stage_q <= TRI_E2D;
+                            end
+                PH_NORM_U: if (sram_read) begin
+                               bv_phase     <= PH_NORM;
+                               calc_stage_q <= N1_CROSS;
+                           end
+                PH_NORM: if (step_done && calc_stage_q == N2_NORM) bv_phase <= PH_CHECK;
+                // the triangle chain: every failed check drops to the next object
+                PH_TRI: if (step_done) begin
+                            case (calc_stage_q)
+                                TRI_FAR:   if (resp_result[0])  bv_phase <= PH_OBJ_NEXT; // over 15 from the corner
+                                TRI_DETP:  if (!resp_result[0]) bv_phase <= PH_OBJ_NEXT; // parallel to the plane
+                                TRI_ATOPN: if (resp_result[0])  bv_phase <= PH_OBJ_NEXT;
+                                TRI_DETLO: if (resp_result[0])  bv_phase <= PH_OBJ_NEXT;
+                                           else                bv_phase <= PH_TRI_E1B;
+                                TRI_BETAN: if (resp_result[0])  bv_phase <= PH_OBJ_NEXT;
+                                TRI_SUMD:  if (resp_result[0])  bv_phase <= PH_OBJ_NEXT;
+                                TRI_BETAD: bv_phase <= PH_TRI_E1C;
+                                TRI_SUM1:  bv_phase <= PH_TRI_E2C;
+                                TRI_GATE:  if (!resp_result[0]) bv_phase <= PH_OBJ_NEXT; // behind the start
+                                TRI_BEST:  bv_phase <= PH_OBJ_NEXT;
+                                default: ;
+                            endcase
+                        end
                 default: ;
             endcase
         end
