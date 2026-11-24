@@ -185,19 +185,22 @@ module intersection_unit #(
     input  logic [47:0]            ray_dir,     // D, DIR (Q2.14), length 1: z [47:32], y [31:16], x [15:0]
     input  logic [4:0]             bv_count,    // number of BVs, 0 to 16 (header w15[7:3])
 
-    // SRAM reads (the RTU passes them on to the SRAM Controller)
-    output logic [ADDR_WIDTH-1:0]  sram_addr,   // register: address of the word to read
-    output logic                   sram_rd,     // 1-cycle pulse: read the word at sram_addr
-    input  logic [DATA_WIDTH-1:0]  sram_data,   // SRAM word, shared by all RTU sub-blocks
-    input  logic                   sram_valid,  // 1 = sram_data holds the word asked for
+    // Macro-ops to the Decode Unit. macro_if carries req_valid, req_op,
+    // req_ready, resp_valid, resp_result and resp_ready, and this module is the
+    // client.
+    macro_if.client                macro,
+    // tinytracer_pkg's macro_word_t is 101 bits and has no fmt field, while the
+    // macro-op encoding needs fmt as bit 101. This wire carries it until the
+    // struct grows a fmt member. Raised with the RTU and Decode owners.
+    output logic                   req_fmt,
 
-    // Macro-ops (the RTU passes them on to the Decode Unit; the macro_if client signals)
-    output logic                   req_valid,   // 1 = req_op holds a macro-op
-    output logic [101:0]           req_op,      // fmt [101], u [100:53], v [52:5], opcode [4:0]
-    input  logic                   req_ready,   // 1 = the Decode Unit takes req_op in this cycle
-    input  logic                   resp_valid,  // 1 = resp_result holds the result
-    input  logic [3*WLEN-1:0]      resp_result, // z [47:32], y [31:16], x [15:0]; a compare gives 1 or 0 in x
-    output logic                   resp_ready,  // 1 = the IU takes resp_result in this cycle
+    // Reads from the SRAM controller, as the client of sram_rd_if. The
+    // handshake, the data and the response go through the interface. The
+    // address stays flat because tinytracer_pkg sets ADDR_WIDTH = 8 and the
+    // 512 word SRAM needs 9; move sram_addr into sram.req_raddr once that
+    // parameter becomes 9.
+    sram_rd_if.client              sram,
+    output logic [ADDR_WIDTH-1:0]  sram_addr,   // register: address of the word to read
 
     // Debug
     output state_t                 state_q,
@@ -212,9 +215,42 @@ module intersection_unit #(
     output [6:0]                   dbg_obj_cnt     // w0[6:0]  of the reached BV
 );
 
+    // ------------------------------------------------------------------
+    // Interface aliases. The body below reads these names; the interface
+    // members carry them in and out.
+    // ------------------------------------------------------------------
+    logic [ADDR_WIDTH-1:0] sram_addr_q;   // address of the word to read
+    logic                  sram_req;      // 1-cycle pulse: read that word
+    logic [DATA_WIDTH-1:0] sram_rdata;    // the word that came back
+    logic                  sram_rvalid;   // 1 = that word is valid
+    logic                  macro_reqvalid;
+    logic [101:0]          req_sel;       // fmt + u + v + opcode, before the cast
+    logic                  macro_reqready;
+    logic                  macro_rvalid;
+    logic [3*WLEN-1:0]     macro_result;
+    logic                  macro_rready;
+
+    assign sram_rdata      = sram.resp_rdata;
+    assign sram_rvalid     = sram.resp_valid;
+    // sram_addr_q is 9 bits and sram.req_raddr is 8 until ADDR_WIDTH is fixed,
+    // so the interface copy is truncated and sram_addr above is the one to use
+    assign sram.req_raddr  = sram_addr_q[7:0];
+    assign sram.req_valid  = sram_req;
+    assign sram_addr       = sram_addr_q;
+    assign sram.resp_ready = 1'b1;
+
+    assign macro_rvalid     = macro.resp_valid;
+    assign macro_reqready   = macro.req_ready;
+    assign macro_result     = macro.resp_result;
+    assign macro.req_valid  = macro_reqvalid;
+    assign macro.resp_ready = macro_rready;
+    // the struct is {u, v, op}; fmt rides on its own wire for now
+    assign macro.req_op     = macro_word_t'(req_sel[100:0]);
+    assign req_fmt          = req_sel[101];
+
     // Assumption:
     // input ray_origin, ray_dir, bv_count stay same in between start 1-cycle pulse
-    // input resp_valid, res stay same until resp_ready and req_valid(?)
+    // input macro_rvalid, res stay same until macro_rready and macro_reqvalid(?)
 
     // ------------------------------------------------------------------
     // Free compares (Rec 2). Ten checks in the step lists only read the sign,
@@ -252,7 +288,7 @@ module intersection_unit #(
     end
 
     // A free compare has no answer to wait for, so it completes on its own cycle
-    assign res = cmp_free ? {47'd0, free_res} : resp_result;
+    assign res = cmp_free ? {47'd0, free_res} : macro_result;
 
     // ------------------------------------------------------------------
     // K shift and the highest-set-bit finder (spec 5d). The finder picks K so
@@ -283,9 +319,9 @@ module intersection_unit #(
     assign norm_rd      = (calc_stage_q == N2_NORM);
     assign norm_mag     = max15(max15(abs15(slot_c), abs15(slot_d)), abs15(slot_e));
     assign tri_edge_rd  = (bv_phase == PH_TRI_E);
-    assign tri_mag_next = max15(tri_mag, abs15(sram_data));
+    assign tri_mag_next = max15(tri_mag, abs15(sram_rdata));
     assign lof_in       = norm_rd    ? norm_mag[14:1] :
-                          (tri_edge_rd ? tri_mag_next[14:1] : sram_data[14:1]);
+                          (tri_edge_rd ? tri_mag_next[14:1] : sram_rdata[14:1]);
 
     // spec 6.4: k = highest bit of the largest part - 13, so the arrow reads as
     // DIR and its largest part lands between 0.5 and 1
@@ -497,13 +533,13 @@ module intersection_unit #(
                 if (sram_start) sram_state_d = S_SRAM_SEND;
             end
             S_SRAM_SEND: begin
-                // Move to WAIT state after setting sram_rd
+                // Move to WAIT state after setting sram_req
                 sram_state_d = S_SRAM_WAIT;
             end
             S_SRAM_WAIT: begin
-                // Capture the word; sram_rd is combinational, so the next word
+                // Capture the word; sram_req is combinational, so the next word
                 // is requested in this cycle and a word costs 2 cycles
-                if (sram_valid) begin
+                if (sram_rvalid) begin
                     if (sram_w_index == sram_w_last) sram_state_d = S_SRAM_NEXT;
                 end
                 
@@ -537,20 +573,20 @@ module intersection_unit #(
         case (dec_state_q)
             S_DEC_IDLE: begin
             
-                // Move to SEND state when operand of corresponding steps ready for req_op construction and Decoder available
+                // Move to SEND state when operand of corresponding steps ready for req_sel construction and Decoder available
                 if (calc_active) begin
                     // A Decode that is ready takes the macro-op in this cycle
-                    if (req_ready) dec_state_d = S_DEC_WAIT;
+                    if (macro_reqready) dec_state_d = S_DEC_WAIT;
                     else           dec_state_d = S_DEC_SEND;
                 end
             end
             S_DEC_SEND: begin
-                // Move to WAIT state for holding req_op and processing latched response after setting req_valid
-                if (req_ready) dec_state_d = S_DEC_WAIT;
+                // Move to WAIT state for holding req_sel and processing latched response after setting macro_reqvalid
+                if (macro_reqready) dec_state_d = S_DEC_WAIT;
             end
             S_DEC_WAIT: begin
                 // Response queue: latched response
-                if (resp_valid) begin
+                if (macro_rvalid) begin
                     // Last step of this BV
                     if (calc_stage_q == CALC_REACH || calc_stage_q == SP_BEST) dec_state_d = S_DEC_DONE;
                     // Iterate next Decoder request
@@ -930,19 +966,19 @@ module intersection_unit #(
 
     // Handshakes are combinational, so a partner that is already ready answers
     // in the same cycle and no step pays a bubble
-    assign req_valid  = (dec_state_q == S_DEC_SEND) ||
+    assign macro_reqvalid  = (dec_state_q == S_DEC_SEND) ||
                         ((dec_state_q == S_DEC_IDLE) && calc_active);
-    assign req_op     = (dec_state_q == S_DEC_SEND) ? req_op_q : req_field;
-    assign resp_ready = 1'b1;   // spec 5.5: tied high, the Decode leaves on it
-    assign step_done  = cmp_free || ((dec_state_q == S_DEC_WAIT) && resp_valid);
+    assign req_sel     = (dec_state_q == S_DEC_SEND) ? req_op_q : req_field;
+    assign macro_rready = 1'b1;   // spec 5.5: tied high, the Decode leaves on it
+    assign step_done  = cmp_free || ((dec_state_q == S_DEC_WAIT) && macro_rvalid);
     assign calc_active = ((bv_phase == PH_CALC) || (bv_phase == PH_SPHERE) ||
                           (bv_phase == PH_GROUND) || (bv_phase == PH_WIN) ||
                           (bv_phase == PH_TRI)    || (bv_phase == PH_NORM)) &&
                          !cmp_free;   // a free compare asks the Decode for nothing
 
     // 2 cycles per word: the pulse travels with the capture of the word before
-    assign sram_rd = (sram_state_q == S_SRAM_SEND) ||
-                     ((sram_state_q == S_SRAM_WAIT) && sram_valid &&
+    assign sram_req = (sram_state_q == S_SRAM_SEND) ||
+                     ((sram_state_q == S_SRAM_WAIT) && sram_rvalid &&
                       (sram_w_index != sram_w_last));
 
     // one burst per phase; the phase block decides which record it reads
@@ -961,7 +997,7 @@ module intersection_unit #(
     logic [15:0]       rs_next;
 
     assign k_next  = $signed({1'b0, lof_index}) - (tri_edge_rd ? 5'sd9 : 5'sd10);
-    assign rs_next = kshift($signed(sram_data), k_next);
+    assign rs_next = kshift($signed(sram_rdata), k_next);
 
 
     // FSM Sequential Iteration
@@ -1022,7 +1058,7 @@ module intersection_unit #(
     always_ff @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             sram_state_q  <= S_SRAM_IDLE;
-            sram_addr     <= 9'd17; // BV Address = 17 + 5 * i + word
+            sram_addr_q     <= 9'd17; // BV Address = 17 + 5 * i + word
             sram_w_index  <= 3'd0;  // BV word: w0-w4
             sram_w_last   <= 3'd0;  // last word of this burst
             sram_read     <= 1'b0;
@@ -1035,7 +1071,7 @@ module intersection_unit #(
 
         end else if (start) begin
             sram_state_q  <= S_SRAM_IDLE;
-            sram_addr     <= 9'd17; // BV Address = 17 + 5 * i + word
+            sram_addr_q     <= 9'd17; // BV Address = 17 + 5 * i + word
             sram_w_index  <= 3'd0;  // BV word: w0-w4
             sram_w_last   <= 3'd0;
             sram_read     <= 1'b0;
@@ -1055,72 +1091,72 @@ module intersection_unit #(
                         // object's w3-w6 (radius first, then the centre)
                         case (bv_phase)
                             PH_W0: begin
-                                sram_addr    <= bv_base;
+                                sram_addr_q    <= bv_base;
                                 sram_w_index <= 3'd0;
                                 sram_w_last  <= 3'd0;
                             end
                             PH_OBJ: begin
-                                sram_addr    <= obj_addr_q;
+                                sram_addr_q    <= obj_addr_q;
                                 sram_w_index <= 3'd0;
                                 sram_w_last  <= 3'd0;
                             end
                             PH_HEAD: begin
-                                sram_addr    <= obj_addr_q + 9'd3;
+                                sram_addr_q    <= obj_addr_q + 9'd3;
                                 sram_w_index <= 3'd1;
                                 sram_w_last  <= 3'd4;
                             end
                             // winner: the centre of the best sphere, w4-w6
                             PH_WIN_C: begin
-                                sram_addr    <= hit_addr + 9'd4;
+                                sram_addr_q    <= hit_addr + 9'd4;
                                 sram_w_index <= 3'd2;
                                 sram_w_last  <= 3'd4;
                             end
                             // winner: the radius at its true size, w3
                             PH_WIN_R: begin
-                                sram_addr    <= hit_addr + 9'd3;
+                                sram_addr_q    <= hit_addr + 9'd3;
                                 sram_w_index <= 3'd0;
                                 sram_w_last  <= 3'd0;
                             end
                             // triangle: both edges w3-w8. This is the burst that
                             // decides K, so it finishes before anything is shifted
                             PH_TRI_E: begin
-                                sram_addr    <= obj_addr_q + 9'd3;
+                                sram_addr_q    <= obj_addr_q + 9'd3;
                                 sram_w_index <= 3'd1;
                                 sram_w_last  <= 3'd6;
                                 tri_mag      <= 15'd0;
                             end
                             // triangle: the corner w9-w11
                             PH_TRI_V: begin
-                                sram_addr    <= obj_addr_q + 9'd9;
+                                sram_addr_q    <= obj_addr_q + 9'd9;
                                 sram_w_index <= 3'd1;
                                 sram_w_last  <= 3'd3;
                             end
                             // triangle stages 3 and 4: edge 1, then edge 2,
                             // each fetched at the size that stage needs
                             PH_TRI_E1B: begin
-                                sram_addr    <= obj_addr_q + 9'd6;
+                                sram_addr_q    <= obj_addr_q + 9'd6;
                                 sram_w_index <= 3'd1;
                                 sram_w_last  <= 3'd3;
                             end
                             PH_TRI_E1C: begin
-                                sram_addr    <= obj_addr_q + 9'd6;
+                                sram_addr_q    <= obj_addr_q + 9'd6;
                                 sram_w_index <= 3'd1;
                                 sram_w_last  <= 3'd3;
                             end
                             PH_TRI_E2C: begin
-                                sram_addr    <= obj_addr_q + 9'd3;
+                                sram_addr_q    <= obj_addr_q + 9'd3;
                                 sram_w_index <= 3'd1;
                                 sram_w_last  <= 3'd3;
                             end
                             // triangle normal: both edges of the winner, read
                             // again because the test did not keep them
                             PH_NORM_U: begin
-                                sram_addr    <= hit_addr + 9'd3;
+                                sram_addr_q    <= hit_addr + 9'd3;
                                 sram_w_index <= 3'd1;
                                 sram_w_last  <= 3'd6;
                             end
                             default: begin
-                                sram_addr    <= bv_base + 9'd1;
+                                sram_addr_q    <= bv_base + 9'd1;
                                 sram_w_index <= 3'd1;
                                 sram_w_last  <= 3'd4;
                             end
@@ -1128,17 +1164,17 @@ module intersection_unit #(
                     end
                 end
 
-                // Read SRAM: sram_rd is high this cycle, so load the next address
+                // Read SRAM: sram_req is high this cycle, so load the next address
                 S_SRAM_SEND: begin
-                    sram_addr <= sram_addr + 9'd1;
+                    sram_addr_q <= sram_addr_q + 9'd1;
                 end
 
-                // Process SRAM data. sram_rd is combinational, so the next word
+                // Process SRAM data. sram_req is combinational, so the next word
                 // is requested in this same cycle and a word costs 2 cycles.
                 S_SRAM_WAIT: begin
-                    if (sram_valid) begin
+                    if (sram_rvalid) begin
                         // held for the phase block, which latches w0 a cycle later
-                        sram_word_q <= sram_data;
+                        sram_word_q <= sram_rdata;
 
                         // Triangle bursts land by phase: the same words are read
                         // into different registers at different stages, so the
@@ -1146,43 +1182,43 @@ module intersection_unit #(
                         if (bv_phase == PH_TRI_E) begin
                             tri_mag <= tri_mag_next;
                             case (sram_w_index)
-                                3'd1: slot_c <= sram_data;  // edge 2 z
-                                3'd2: slot_d <= sram_data;  // edge 2 y
-                                3'd3: slot_e <= sram_data;  // edge 2 x
-                                3'd4: slot_b <= sram_data;  // edge 1 z
-                                3'd5: slot_j <= sram_data;  // edge 1 y
-                                3'd6: slot_k <= sram_data;  // edge 1 x
+                                3'd1: slot_c <= sram_rdata;  // edge 2 z
+                                3'd2: slot_d <= sram_rdata;  // edge 2 y
+                                3'd3: slot_e <= sram_rdata;  // edge 2 x
+                                3'd4: slot_b <= sram_rdata;  // edge 1 z
+                                3'd5: slot_j <= sram_rdata;  // edge 1 y
+                                3'd6: slot_k <= sram_rdata;  // edge 1 x
                                 default: ;
                             endcase
                         end else if (bv_phase == PH_TRI_V) begin
                             case (sram_w_index)
-                                3'd1: slot_f <= sram_data;  // corner z
-                                3'd2: slot_g <= sram_data;  // corner y
-                                3'd3: slot_h <= sram_data;  // corner x
+                                3'd1: slot_f <= sram_rdata;  // corner z
+                                3'd2: slot_g <= sram_rdata;  // corner y
+                                3'd3: slot_h <= sram_rdata;  // corner x
                                 default: ;
                             endcase
                         end else if (bv_phase == PH_TRI_E1C) begin
                             case (sram_w_index)
-                                3'd1: slot_f <= sram_data;  // edge 1 z
-                                3'd2: slot_g <= sram_data;  // edge 1 y
-                                3'd3: slot_h <= sram_data;  // edge 1 x
+                                3'd1: slot_f <= sram_rdata;  // edge 1 z
+                                3'd2: slot_g <= sram_rdata;  // edge 1 y
+                                3'd3: slot_h <= sram_rdata;  // edge 1 x
                                 default: ;
                             endcase
                         end else if (bv_phase == PH_NORM_U) begin
                             case (sram_w_index)
-                                3'd1: slot_c <= sram_data;  // edge 2 z
-                                3'd2: slot_d <= sram_data;  // edge 2 y
-                                3'd3: slot_e <= sram_data;  // edge 2 x
-                                3'd4: slot_f <= sram_data;  // edge 1 z
-                                3'd5: slot_g <= sram_data;  // edge 1 y
-                                3'd6: slot_h <= sram_data;  // edge 1 x
+                                3'd1: slot_c <= sram_rdata;  // edge 2 z
+                                3'd2: slot_d <= sram_rdata;  // edge 2 y
+                                3'd3: slot_e <= sram_rdata;  // edge 2 x
+                                3'd4: slot_f <= sram_rdata;  // edge 1 z
+                                3'd5: slot_g <= sram_rdata;  // edge 1 y
+                                3'd6: slot_h <= sram_rdata;  // edge 1 x
                                 default: ;
                             endcase
                         end else if (bv_phase == PH_TRI_E1B || bv_phase == PH_TRI_E2C) begin
                             case (sram_w_index)
-                                3'd1: slot_c <= sram_data;  // edge 1, then edge 2: z
-                                3'd2: slot_d <= sram_data;  // y
-                                3'd3: slot_e <= sram_data;  // x
+                                3'd1: slot_c <= sram_rdata;  // edge 1, then edge 2: z
+                                3'd2: slot_d <= sram_rdata;  // y
+                                3'd3: slot_e <= sram_rdata;  // x
                                 default: ;
                             endcase
                         end else begin
@@ -1190,7 +1226,7 @@ module intersection_unit #(
                         case (sram_w_index)
                             3'd0: begin
                                 // w0: BV object list or object type, see the phase block
-                                if (bv_phase == PH_WIN_R) slot_j <= sram_data; // raw winner radius
+                                if (bv_phase == PH_WIN_R) slot_j <= sram_rdata; // raw winner radius
                             end
                             3'd1: begin
                                 slot_b     <= rs_next; // radius, already shifted by K
@@ -1198,17 +1234,17 @@ module intersection_unit #(
                                 // Q10: a zero radius means no volume, so the test
                                 // could never pass and the normal step would divide
                                 // by zero. Skip the object at the cheapest point.
-                                if (bv_phase == PH_HEAD && sram_data == 16'd0)
+                                if (bv_phase == PH_HEAD && sram_rdata == 16'd0)
                                     obj_dead <= 1'b1;
                             end
                             3'd2: begin
-                                slot_c     <= sram_data; // z
+                                slot_c     <= sram_rdata; // z
                             end
                             3'd3: begin
-                                slot_d     <= sram_data; // y
+                                slot_d     <= sram_rdata; // y
                             end
                             3'd4: begin
-                                slot_e     <= sram_data; // x
+                                slot_e     <= sram_rdata; // x
                             end
                             default: ;
                         endcase
@@ -1217,7 +1253,7 @@ module intersection_unit #(
                         if (sram_w_index == sram_w_last) begin
                             sram_read <= 1'b1;
                         end else begin
-                            sram_addr <= sram_addr + 9'd1;
+                            sram_addr_q <= sram_addr_q + 9'd1;
                             sram_w_index <= sram_w_index + 3'd1;
                         end
                     end
@@ -1338,7 +1374,7 @@ module intersection_unit #(
 
                 S_DEC_WAIT: begin
                     // Accept Decoder response
-                    if (resp_valid) begin
+                    if (macro_rvalid) begin
                         // Latch res
                         // Note: not sure how to deal with 2 root, in the document at
                         // https://uw-asic.github.io/TinyTracer/encoding/instruction/
