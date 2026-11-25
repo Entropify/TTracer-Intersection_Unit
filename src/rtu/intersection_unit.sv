@@ -189,18 +189,9 @@ module intersection_unit #(
     // req_ready, resp_valid, resp_result and resp_ready, and this module is the
     // client.
     macro_if.client                macro,
-    // tinytracer_pkg's macro_word_t is 101 bits and has no fmt field, while the
-    // macro-op encoding needs fmt as bit 101. This wire carries it until the
-    // struct grows a fmt member. Raised with the RTU and Decode owners.
-    output logic                   req_fmt,
 
-    // Reads from the SRAM controller, as the client of sram_rd_if. The
-    // handshake, the data and the response go through the interface. The
-    // address stays flat because tinytracer_pkg sets ADDR_WIDTH = 8 and the
-    // 512 word SRAM needs 9; move sram_addr into sram.req_raddr once that
-    // parameter becomes 9.
+    // Reads from the SRAM controller, as the client of sram_rd_if
     sram_rd_if.client              sram,
-    output logic [ADDR_WIDTH-1:0]  sram_addr,   // register: address of the word to read
 
     // Debug
     output state_t                 state_q,
@@ -232,11 +223,8 @@ module intersection_unit #(
 
     assign sram_rdata      = sram.resp_rdata;
     assign sram_rvalid     = sram.resp_valid;
-    // sram_addr_q is 9 bits and sram.req_raddr is 8 until ADDR_WIDTH is fixed,
-    // so the interface copy is truncated and sram_addr above is the one to use
-    assign sram.req_raddr  = sram_addr_q[7:0];
+    assign sram.req_raddr  = sram_addr_q;
     assign sram.req_valid  = sram_req;
-    assign sram_addr       = sram_addr_q;
     assign sram.resp_ready = 1'b1;
 
     assign macro_rvalid     = macro.resp_valid;
@@ -244,9 +232,8 @@ module intersection_unit #(
     assign macro_result     = macro.resp_result;
     assign macro.req_valid  = macro_reqvalid;
     assign macro.resp_ready = macro_rready;
-    // the struct is {u, v, op}; fmt rides on its own wire for now
-    assign macro.req_op     = macro_word_t'(req_sel[100:0]);
-    assign req_fmt          = req_sel[101];
+    // macro_word_t is {fmt, u, v, op} = 102 bits, the same order as req_sel
+    assign macro.req_op     = macro_word_t'(req_sel);
 
     // Assumption:
     // input ray_origin, ray_dir, bv_count stay same in between start 1-cycle pulse
